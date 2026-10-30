@@ -36,6 +36,13 @@
     border: 1px solid #2a3c63; padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; }
   .toast.show { opacity: 1; }
   .setup { color: #ffb4b4; }
+  .wallgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .wallgrid figure { margin: 0; position: relative; }
+  .wallgrid img { width: 100%; display: block; border-radius: 4px; }
+  .wallgrid figure.gone img { opacity: .2; }
+  .wallgrid button { position: absolute; left: 4px; right: 4px; bottom: 4px; min-width: 0; padding: 6px;
+    font-size: 12px; background: #d8321b; border-color: #d8321b; }
+  .wallgrid figure.gone button { background: #12203d; border-color: #2a3c63; }
   /* Always-reachable kill switch for a bad message. */
   .panic { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; padding: 10px 0;
     background: linear-gradient(var(--bg) 80%, transparent); }
@@ -142,6 +149,11 @@ COUSIN!
 WHEN THIS HITS ZERO WE'RE DONE</textarea>
     <div class="row"><button id="setPhr" class="primary">Save phrases</button></div>
     <div class="row"><label>At zero</label><input type="text" id="zero" maxlength="23" value="TIME'S UP"><button id="setZero" style="flex:0">Set</button></div>
+  </section>
+
+  <section id="wallSec" hidden>
+    <h2>THE WALL (photos expire after 3 h; ./bear archive saves them)</h2>
+    <div class="wallgrid" id="wallGrid"></div>
   </section>
 
   <section>
@@ -278,6 +290,48 @@ if (LOCAL) {
   es.onmessage = (ev) => {
     try { const m = JSON.parse(ev.data); if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000); } catch (e) {}
   };
+}
+
+// ---- the wall: guests' photos, with a hide button each -----------------------
+// Hiding publishes the photo's id to a public -hide topic the guest page filters by.
+const WALL = `${GUEST_TOPIC}-wall`, WALL_HIDE = `${WALL}-hide`;
+const photos = new Map(), hiddenIds = new Set();
+function renderWall() {
+  const now = Date.now() / 1000;
+  const list = [...photos.entries()].filter(([, p]) => p.expires > now).sort((a, b) => b[1].time - a[1].time);
+  $("wallSec").hidden = list.length === 0;
+  $("wallGrid").replaceChildren(...list.map(([id, p]) => {
+    const fig = document.createElement("figure");
+    fig.className = hiddenIds.has(id) ? "gone" : "";
+    const img = document.createElement("img");
+    img.src = p.url; img.alt = p.name; img.loading = "lazy";
+    const b = document.createElement("button");
+    b.textContent = hiddenIds.has(id) ? "hidden" : `HIDE ${p.name}`;
+    b.disabled = hiddenIds.has(id);
+    b.onclick = async () => {
+      b.disabled = true;
+      const r = await fetch(`${NTFY}/${WALL_HIDE}`, { method: "POST", body: id }).catch(() => null);
+      toast(r && r.ok ? "hidden" : "hide failed");
+      if (!r || !r.ok) b.disabled = false;
+    };
+    fig.append(img, b);
+    return fig;
+  }));
+}
+function onWallLine(line) {
+  try {
+    const m = JSON.parse(line);
+    if (m.event !== "message") return;
+    if (m.topic === WALL_HIDE) hiddenIds.add(m.message.trim());
+    else if (m.attachment) photos.set(m.id, { url: m.attachment.url, name: m.message, time: m.time, expires: m.attachment.expires });
+  } catch (e) {}
+}
+if (!LOCAL) {
+  const topics = `${WALL},${WALL_HIDE}`;
+  fetch(`${NTFY}/${topics}/json?poll=1&since=all`).then((r) => r.text())
+    .then((b) => { b.split("\n").forEach(onWallLine); renderWall(); }).catch(() => {});
+  new EventSource(`${NTFY}/${topics}/sse`).onmessage = (ev) => { onWallLine(ev.data); renderWall(); };
+  setInterval(renderWall, 60000);
 }
 </script>
 </body>

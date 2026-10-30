@@ -6,6 +6,7 @@
 #   monitor   serial monitor only
 #   send MSG  post a guest message through ntfy
 #   cmd JSON  post an admin command, e.g. ./bear cmd '{"cmd":"start"}'
+#   archive   save wall photos to ~/Pictures/bear-wall (leave running)
 set -e
 cd "$(dirname "$0")"
 topic() { sed -n "s/^#define $1 \"\(.*\)\"/\1/p" "$2"; }
@@ -18,5 +19,6 @@ case "$1" in
   monitor) cd firmware && pio device monitor ;;
   send) curl -fsS -d "$2" "https://ntfy.sh/$(topic NTFY_GUEST_TOPIC firmware/include/config.h)" >/dev/null && echo sent ;;
   cmd) curl -fsS -d "$2" "https://ntfy.sh/$(topic NTFY_ADMIN_TOPIC firmware/include/secrets.h)" >/dev/null && echo sent ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ; exit 2 ;;
+  archive) exec caffeinate -i python3 tools/archive_wall.py ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ; exit 2 ;;
 esac

@@ -115,6 +115,37 @@
   .err { animation: shake .35s; }
   @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 
+  /* staff photo */
+  .snap {
+    display: block; margin: 18px auto 0; padding: 10px 16px; border: 1.5px dashed #2a3c63; border-radius: 6px;
+    background: transparent; color: var(--led-hot); cursor: pointer;
+    font: 700 14px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .2em;
+  }
+  .snap:active { background: #0d1a33; }
+  .wall { margin: 34px calc(-1 * var(--pad)) 0; padding: 26px var(--pad) 8px; border-top: 1px solid #141c2c;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,.015) 0 1px, transparent 1px 28px); }
+  .wall .tape { margin: 0 0 18px; display: table; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 4px; }
+  .grid img { width: 100%; display: block; cursor: pointer; }
+  .grid img:nth-child(4n+1) { transform: rotate(-1.5deg); }
+  .grid img:nth-child(4n+2) { transform: rotate(2deg) translateY(10px); }
+  .grid img:nth-child(4n+3) { transform: rotate(1deg); }
+  .grid img:nth-child(4n) { transform: rotate(-2deg) translateY(10px); }
+  .sheet { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 18px; padding: max(18px, env(safe-area-inset-top)) var(--pad) max(18px, env(safe-area-inset-bottom));
+    background: rgba(4,6,10,.94); backdrop-filter: blur(6px); }
+  .sheet[hidden] { display: none; }
+  .sheet img { max-width: 100%; max-height: 68dvh; object-fit: contain; }
+  .sheet .acts { display: flex; gap: 10px; width: 100%; max-width: 440px; }
+  .sheet .acts button { flex: 1; height: 56px; border: 0; border-radius: 6px; cursor: pointer;
+    font: 800 16px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .18em; }
+  .sheet .keep { background: var(--steel); color: #dfe7f7; }
+  .sheet .up { background: var(--tape); color: #0b1220; }
+  .sheet .up:disabled { opacity: .5; }
+  .sheet .x { position: absolute; top: max(14px, env(safe-area-inset-top)); right: var(--pad); width: 44px; height: 44px;
+    border: 0; background: transparent; color: #8a96ad; font-size: 26px; cursor: pointer; }
+  .sheet.busy img { opacity: .4; }
+
   @media (min-height: 760px) { .tape { margin: 26px 0 32px; } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
@@ -140,7 +171,23 @@
 
   <div class="spacer"></div>
   <button class="fire" id="fire" form="form" type="submit">FIRE</button>
+  <button class="snap" id="snap" type="button">📸 STAFF PHOTO</button>
+  <input type="file" id="cam" accept="image/*" hidden>
+
+  <section class="wall" id="wall" hidden>
+    <div class="tape">The wall</div>
+    <div class="grid" id="grid"></div>
+  </section>
 </main>
+
+<div class="sheet" id="sheet" hidden>
+  <button class="x" id="sheetX" aria-label="Close">✕</button>
+  <img id="preview" alt="">
+  <div class="acts">
+    <button class="keep" id="keep">KEEP</button>
+    <button class="up" id="tapeUp">TAPE IT UP</button>
+  </div>
+</div>
 <script>
 // Public site: messages go through ntfy.sh to the clock. Served by the clock's
 // own hotspot (http://192.168.4.1): talks to the board's local API instead.
@@ -288,6 +335,239 @@ $("form").addEventListener("submit", async (e) => {
   sending = false;
   render();
 });
+
+// ---- staff photo + the wall ---------------------------------------------------
+// The phone composes a taped-up Polaroid (name on blue tape, clock stamp). Guests
+// can keep it, and/or tape it to the wall: an ntfy topic with photo attachments
+// (2 MB each, they expire after 3 h). Admin hides photos via the -hide topic.
+const WALL = `${GUEST_TOPIC}-wall`;
+const WALL_HIDE = `${WALL}-hide`;
+const MARKER = '"Marker Felt", "Noteworthy", "Chalkboard SE", system-ui, sans-serif';
+const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+let card = null;  // {blob, url, name} for the open sheet
+
+function needName() {
+  const n = nameEl.value.trim().replace(/\s+/g, " ").toUpperCase();
+  if (!n) { $("server").classList.add("need"); fail(); nameEl.focus(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  return n;
+}
+
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// Strip of blue painter's tape with torn ends, drawn at the origin.
+function tape(ctx, w, h) {
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(w, 0);
+  for (let i = 1; i <= 6; i++) ctx.lineTo(w - (i % 2 ? 7 : 0), (h * i) / 6);
+  ctx.lineTo(0, h);
+  for (let i = 5; i >= 0; i--) ctx.lineTo(i % 2 ? 7 : 0, (h * i) / 6);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(61,127,217,.96)";
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,.10)";
+  ctx.fillRect(0, 0, w, h * 0.35);
+}
+
+let grainCanvas = null;
+function grain() {
+  if (grainCanvas) return grainCanvas;
+  grainCanvas = document.createElement("canvas");
+  grainCanvas.width = grainCanvas.height = 160;
+  const g = grainCanvas.getContext("2d"), d = g.createImageData(160, 160);
+  for (let i = 0; i < d.data.length; i += 4) {
+    const v = Math.random() * 255;
+    d.data[i] = d.data[i + 1] = d.data[i + 2] = v;
+    d.data[i + 3] = 255;
+  }
+  g.putImageData(d, 0, 0);
+  return grainCanvas;
+}
+
+async function makeCard(file, name) {
+  const img = await loadImage(file);
+  const W = 1080, H = 1350, PW = 880, PH = 1080, PH0 = 792;
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#07090d";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.translate(W / 2, H / 2 + 20);
+  ctx.rotate(((Math.random() * 4 - 2) * Math.PI) / 180);
+  ctx.translate(-PW / 2, -PH / 2);
+
+  // paper
+  ctx.shadowColor = "rgba(0,0,0,.65)"; ctx.shadowBlur = 40; ctx.shadowOffsetY = 18;
+  ctx.fillStyle = "#f4f1ea";
+  ctx.fillRect(0, 0, PW, PH);
+  ctx.shadowColor = "transparent";
+
+  // photo: cover-crop, biased up a bit to keep faces
+  const px = 44, py = 44, ps = PH0;
+  const sc = Math.max(ps / img.naturalWidth, ps / img.naturalHeight);
+  const sw = ps / sc, sh = ps / sc;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(px, py, ps, ps); ctx.clip();
+  ctx.drawImage(img, (img.naturalWidth - sw) / 2, (img.naturalHeight - sh) * 0.35, sw, sh, px, py, ps, ps);
+  // kitchen grade: warm, a little crushed, grainy, vignetted
+  ctx.globalCompositeOperation = "soft-light";
+  ctx.fillStyle = "rgba(255,170,90,.35)"; ctx.fillRect(px, py, ps, ps);
+  ctx.globalCompositeOperation = "overlay";
+  ctx.globalAlpha = 0.10;
+  ctx.fillStyle = ctx.createPattern(grain(), "repeat"); ctx.fillRect(px, py, ps, ps);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "multiply";
+  const v = ctx.createRadialGradient(px + ps / 2, py + ps / 2, ps * 0.35, px + ps / 2, py + ps / 2, ps * 0.75);
+  v.addColorStop(0, "rgba(255,255,255,1)"); v.addColorStop(1, "rgba(60,50,45,1)");
+  ctx.fillStyle = v; ctx.fillRect(px, py, ps, ps);
+  ctx.restore();
+  URL.revokeObjectURL(img.src);
+
+  // caption: the clock at the moment of the photo, LED blue
+  const clockStr = base ? $("digits").textContent : "YES CHEF";
+  ctx.font = `700 96px ${MONO}`;
+  ctx.fillStyle = "#2f7bff";
+  ctx.shadowColor = "rgba(47,123,255,.75)"; ctx.shadowBlur = 22;
+  ctx.fillText(clockStr, px + 4, py + ps + 128);
+  ctx.shadowColor = "transparent";
+  ctx.font = `600 24px ${MONO}`;
+  ctx.fillStyle = "rgba(23,24,27,.55)";
+  const d = new Date();
+  ctx.fillText(`THE BEAR · ${d.getMonth() + 1}.${d.getDate()}.${String(d.getFullYear()).slice(2)}`, px + 8, py + ps + 186);
+
+  // name on tape across the top edge
+  ctx.font = `700 60px ${MARKER}`;
+  const tw = Math.max(260, ctx.measureText(name).width + 90);
+  ctx.save();
+  ctx.translate(PW / 2 - tw / 2 - 30, -34);
+  ctx.rotate((-3.5 * Math.PI) / 180);
+  tape(ctx, tw, 92);
+  ctx.fillStyle = "#0b1220";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name, 45, 50);
+  ctx.restore();
+  // a plain strip holding the bottom-right corner
+  ctx.save();
+  ctx.translate(PW - 130, PH - 95);
+  ctx.rotate((40 * Math.PI) / 180);
+  tape(ctx, 210, 58);
+  ctx.restore();
+
+  ctx.restore();
+  const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.86));
+  return { blob, url: URL.createObjectURL(blob), name };
+}
+
+function openSheet(src, canTape) {
+  $("preview").src = src;
+  $("tapeUp").hidden = !canTape;
+  $("tapeUp").disabled = false;
+  $("tapeUp").textContent = "TAPE IT UP";
+  $("sheet").hidden = false;
+}
+function closeSheet() {
+  $("sheet").hidden = true;
+  $("sheet").classList.remove("busy");
+  if (card) { URL.revokeObjectURL(card.url); card = null; }
+}
+$("sheetX").onclick = closeSheet;
+
+$("snap").onclick = () => { if (needName()) $("cam").click(); };
+$("cam").onchange = async () => {
+  const f = $("cam").files[0];
+  $("cam").value = "";
+  if (!f) return;
+  try {
+    card = await makeCard(f, needName());
+    openSheet(card.url, true);
+  } catch (e) {
+    fail();
+  }
+};
+
+$("keep").onclick = async () => {
+  const src = $("preview").src;
+  const blob = card ? card.blob : await (await fetch(src)).blob();
+  const file = new File([blob], "the-bear-staff-photo.jpg", { type: "image/jpeg" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); } catch (e) {}
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = file.name;
+  a.click();
+};
+
+$("tapeUp").onclick = async () => {
+  if (!card) return;
+  const b = $("tapeUp");
+  b.disabled = true;
+  b.textContent = "···";
+  $("sheet").classList.add("busy");
+  try {
+    const q = `filename=staff-photo.jpg&message=${encodeURIComponent(card.name)}`;
+    // Untyped Blob keeps this a CORS "simple" request (no preflight).
+    const r = await fetch(`${NTFY}/${WALL}?${q}`, { method: "PUT", body: new Blob([card.blob]) });
+    if (!r.ok) throw new Error(r.status);
+    navigator.vibrate?.(30);
+    closeSheet();
+    $("wall").scrollIntoView({ behavior: "smooth" });
+  } catch (e) {
+    b.disabled = false;
+    b.textContent = "TRY AGAIN";
+    $("sheet").classList.remove("busy");
+  }
+};
+
+const photos = new Map();  // id -> {url, name, time, expires}
+const hidden = new Set();
+function renderWall() {
+  const now = Date.now() / 1000;
+  const list = [...photos.entries()]
+    .filter(([id, p]) => !hidden.has(id) && p.expires > now)
+    .sort((a, b) => b[1].time - a[1].time);
+  $("wall").hidden = list.length === 0;
+  const grid = $("grid");
+  grid.replaceChildren(...list.map(([id, p]) => {
+    const img = document.createElement("img");
+    img.src = p.url;
+    img.alt = p.name;
+    img.loading = "lazy";
+    img.onclick = () => openSheet(p.url, false);
+    img.onerror = () => { photos.delete(id); img.remove(); };
+    return img;
+  }));
+}
+function onWallLine(line) {
+  try {
+    const m = JSON.parse(line);
+    if (m.event !== "message") return;
+    if (m.topic === WALL_HIDE) hidden.add(m.message.trim());
+    else if (m.attachment) photos.set(m.id, { url: m.attachment.url, name: m.message, time: m.time, expires: m.attachment.expires });
+  } catch (e) {}
+}
+function subscribeWall() {
+  const topics = `${WALL},${WALL_HIDE}`;
+  fetch(`${NTFY}/${topics}/json?poll=1&since=all`).then((r) => r.text()).then((b) => {
+    b.split("\n").forEach(onWallLine);
+    renderWall();
+  }).catch(() => {});
+  new EventSource(`${NTFY}/${topics}/sse`).onmessage = (ev) => { onWallLine(ev.data); renderWall(); };
+  setInterval(renderWall, 60000);  // drop expired photos
+}
+
+if (LOCAL) $("snap").hidden = true;  // no internet on the board's hotspot
+else subscribeWall();
 </script>
 </body>
 </html>

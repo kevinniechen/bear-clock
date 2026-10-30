@@ -88,6 +88,17 @@ The guest topic is public by design (it's in the page). If someone spams it, cha
 The QR points at the page, not the topic, so no reprint is needed. Or just hit Guests OFF.
 Spam can't control the clock: only the admin topic takes commands.
 
+## Staff photos
+
+📸 STAFF PHOTO on the guest page: the phone turns a photo into a Polaroid with the
+guest's name on blue painter's tape and the clock's time stamped in LED blue. **KEEP**
+saves/shares it. **TAPE IT UP** posts it to **The Wall** on the guest page (opt-in per photo).
+The admin page shows every wall photo with a **HIDE** button.
+
+Wall photos live on ntfy.sh and expire after 3 h (2 MB each). To keep them, run
+`./bear archive` on the Mac during the party → `~/Pictures/bear-wall/` (hidden ones go to
+`hidden/`). Photos never touch the panel. Wall/hide topics are public, like the guest topic.
+
 ## Limits worth knowing
 
 - ntfy.sh allows ~250 published messages/day **per IP**. The board's status heartbeat
