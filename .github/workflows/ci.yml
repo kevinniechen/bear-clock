@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Logic tests (ASan/UBSan)
+        run: |
+          c++ -std=c++17 -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
+            -Ifirmware/lib/bearcore/src sim/sim.cpp firmware/lib/bearcore/src/bearcore.cpp -o sim/sim.bin
+          sim/sim.bin test
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('firmware/platformio.ini') }}
+      - run: pip install platformio
+      - name: Build
+        run: |
+          cp firmware/include/secrets.h.example firmware/include/secrets.h
+          cd firmware && pio run

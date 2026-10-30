@@ -31,7 +31,9 @@ the admin page there (PIN = `ADMIN_PIN` in `secrets.h`).
 2. **Wi-Fi.** Edit `firmware/include/secrets.h` → `WIFI_NETWORKS` with your phone hotspot.
    iPhone: Settings → Personal Hotspot → **Maximize Compatibility ON** (ESP32 is 2.4 GHz only).
    The SSID must match exactly, including the curly apostrophe in `Kevin’s iPhone`.
-3. **Flash.** `cd firmware && pio run -t upload -t monitor`. If upload can't find the
+3. **Flash.** `./bear flash`. On boot the panel flashes R, G, B, W (each with its letter), then
+   ONLINE once the internet path works. After the first USB flash: `./bear ota <ip>` (IP is in
+   the serial log) updates over Wi-Fi, so there's no need to unpick the costume. If upload can't find the
    port: hold BOOT, tap EN, release BOOT, retry.
 4. **Smoke test** (serial monitor): type `hello` + Enter → it should scroll.
    Type `{"cmd":"set","m":2,"start":true}` → a 2-minute countdown runs.

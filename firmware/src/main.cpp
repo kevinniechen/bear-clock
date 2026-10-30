@@ -8,6 +8,7 @@
 // Commands from every source go through cmdQueue so only loop() touches state.
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <DNSServer.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 #include <HTTPClient.h>
@@ -17,6 +18,7 @@
 #include <WiFiClientSecure.h>
 #include <WiFiMulti.h>
 #include <Wire.h>
+#include <esp_system.h>
 
 #include "bearcore.h"
 #include "config.h"
@@ -75,6 +77,9 @@ static String statusJson() {
   d["ip"] = WiFi.localIP().toString();
   d["ntfy"] = (bool)ntfyConnected;
   d["uptime"] = millis() / 1000;
+  d["heap"] = ESP.getFreeHeap();
+  d["minHeap"] = ESP.getMinFreeHeap();
+  d["reset"] = (int)esp_reset_reason();  // 1 power-on, 3 sw, 4 panic, 6/7 watchdog, 9 brownout
   String out;
   serializeJson(d, out);
   return out;
@@ -107,6 +112,29 @@ static void panelBegin() {
   const char* o = PANEL_RGB_ORDER;
   for (int i = 0; i < 3; i++) order[i] = o[i] == 'R' ? 0 : o[i] == 'G' ? 1 : 2;
   memset(&shown, 0, sizeof(shown));
+}
+
+// Solid R, G, B, white with the letter shown: wrong colors -> PANEL_RGB_ORDER,
+// garbled or ghosted -> PANEL_FM6126A / PANEL_CLKPHASE (see config.h).
+static void panelSelfTest() {
+  if (!panelOk) return;
+  const struct { RGB c; const char* l; } steps[] = {
+      {{255, 0, 0}, "R"}, {{0, 255, 0}, "G"}, {{0, 0, 255}, "B"}, {{255, 255, 255}, "W"}};
+  for (auto& st : steps) {
+    Frame f;
+    f.clear(bear::scale(st.c, 1, 3));
+    bear::drawText(f, 26, 9, st.l, {0, 0, 0}, 2);
+    for (int y = 0; y < bear::H; y++)
+      for (int x = 0; x < bear::W; x++) {
+        RGB c = f.px[y][x];
+        uint8_t ch[3] = {c.r, c.g, c.b};
+        panel->drawPixelRGB888(PANEL_ROTATE_180 ? bear::W - 1 - x : x,
+                               PANEL_ROTATE_180 ? bear::H - 1 - y : y, ch[order[0]], ch[order[1]],
+                               ch[order[2]]);
+      }
+    delay(350);
+  }
+  panel->clearScreen();
 }
 
 // Pushes only changed pixels; the DMA engine keeps refreshing on its own.
@@ -440,6 +468,10 @@ static void ntfyStream() {
 
   ntfyConnected = true;
   Serial.println("ntfy connected");
+  static bool announced = false;
+  if (!announced) {  // one visible sign on the panel that the internet path works
+    announced = enqueue(true, "{\"cmd\":\"flash\",\"text\":\"ONLINE\"}");
+  }
   publishStatus = true;
   // ntfy sends a keepalive event every ~45 s; reconnect if we hear nothing.
   while (WiFi.status() == WL_CONNECTED && readLine(c, line, 70000)) {
@@ -457,6 +489,8 @@ static void ntfyStream() {
   Serial.println("ntfy disconnected");
 }
 
+static volatile bool otaStarted = false;
+
 static void netTask(void*) {
   WiFiMulti multi;
   int nNets = 0;
@@ -473,6 +507,15 @@ static void netTask(void*) {
       }
       Serial.printf("wifi: %s ip=%s rssi=%d\n", WiFi.SSID().c_str(),
                     WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      if (!otaStarted) {
+        // Wi-Fi updates: ./bear ota <ip>. Handled in webTask.
+        ArduinoOTA.setHostname("bear-clock");
+        ArduinoOTA.setPassword(ADMIN_PIN);
+        ArduinoOTA.onStart([] { Serial.println("OTA start"); });
+        ArduinoOTA.onError([](ota_error_t e) { Serial.printf("OTA error %d\n", e); });
+        ArduinoOTA.begin();
+        otaStarted = true;
+      }
     }
     uint32_t t0 = millis();
     ntfyStream();
@@ -522,6 +565,7 @@ static void webTask(void*) {
   for (;;) {
     dns.processNextRequest();
     server.handleClient();
+    if (otaStarted) ArduinoOTA.handle();
     vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
@@ -554,11 +598,12 @@ void setup() {
   pinMode(PIN_SPK_EN, OUTPUT);
   digitalWrite(PIN_SPK_EN, LOW);
   delay(300);
-  Serial.println("\n== Bear clock ==");
+  Serial.printf("\n== Bear clock == reset reason %d\n", (int)esp_reset_reason());
 
   cmdQueue = xQueueCreate(16, sizeof(Cmd));
   loadState();
   panelBegin();
+  panelSelfTest();
   buttonsBegin();
 
   WiFi.persistent(false);
@@ -572,6 +617,8 @@ void setup() {
   xTaskCreatePinnedToCore(netTask, "net", 12288, nullptr, 1, nullptr, 0);
   xTaskCreatePinnedToCore(webTask, "web", 8192, nullptr, 1, nullptr, 0);
   Serial.println("type a message, or JSON like {\"cmd\":\"start\"}, or 'status'");
+  // Reboot if loop() ever stalls > 5 s; the countdown resumes from NVS.
+  enableLoopWDT();
 }
 
 void loop() {

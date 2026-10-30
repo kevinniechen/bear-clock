@@ -2,167 +2,270 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>THE BEAR — Fire a ticket</title>
-<meta name="theme-color" content="#05070c">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>THE BEAR</title>
+<meta name="theme-color" content="#07090d">
 <style>
-  :root { --blue: #2f7bff; --ice: #9fd0ff; --bg: #05070c; --line: #16223a; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: #e8eefc;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-  main { max-width: 440px; margin: 0 auto; padding: 28px 18px 40px; }
-  .kicker { letter-spacing: .3em; font-size: 12px; color: var(--ice); opacity: .8; text-align: center; }
-  h1 { font-size: 13px; letter-spacing: .25em; font-weight: 600; text-align: center; margin: 6px 0 18px; }
-  .clock { text-align: center; font-size: clamp(44px, 15vw, 64px); font-weight: 700; color: var(--blue);
-    letter-spacing: .04em; text-shadow: 0 0 12px rgba(47,123,255,.7), 0 0 28px rgba(47,123,255,.35);
-    font-variant-numeric: tabular-nums; margin: 4px 0 2px; min-height: 1.1em; }
-  .clock.paused { opacity: .55; }
-  .sub { text-align: center; font-size: 12px; color: #7f8fb0; letter-spacing: .12em; min-height: 1.3em; }
-  .sign { margin: 18px auto 24px; text-align: center; font-size: 12px; letter-spacing: .3em;
-    border: 1px solid var(--line); padding: 8px; color: var(--ice); }
-  label { display: block; font-size: 12px; letter-spacing: .2em; color: #7f8fb0; margin-bottom: 8px; }
-  textarea { width: 100%; height: 92px; resize: none; background: #0a1020; color: #fff; border: 1px solid #22345a;
-    border-radius: 6px; padding: 12px; font: 600 18px/1.3 ui-monospace, Menlo, monospace; text-transform: uppercase; }
-  textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47,123,255,.25); }
-  .count { text-align: right; font-size: 11px; color: #56668a; margin-top: 4px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
-  .chips button { background: transparent; color: var(--ice); border: 1px solid #22345a; border-radius: 999px;
-    padding: 7px 12px; font: 600 12px ui-monospace, Menlo, monospace; letter-spacing: .08em; }
-  .chips button:active { background: #0d1a33; }
-  .fire { width: 100%; padding: 16px; border: 0; border-radius: 6px; background: var(--blue); color: #fff;
-    font: 700 16px ui-monospace, Menlo, monospace; letter-spacing: .25em; }
-  .fire:disabled { background: #1b2b4d; color: #7f8fb0; }
-  .msg { min-height: 1.4em; text-align: center; margin-top: 14px; font-size: 13px; letter-spacing: .08em; }
-  .ok { color: #7dffb0; } .err { color: #ff8a8a; }
-  footer { margin-top: 36px; text-align: center; font-size: 11px; color: #3d4b69; letter-spacing: .12em; }
+  :root {
+    --bg: #07090d; --led: #2f7bff; --led-hot: #8fc1ff; --tape: #3d7fd9; --paper: #f4f1ea;
+    --ink: #17181b; --steel: #1a1f27;
+    --pad: max(18px, env(safe-area-inset-left));
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body {
+    min-height: 100dvh; color: #e8eefc; overflow-x: hidden;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background:
+      repeating-linear-gradient(90deg, rgba(255,255,255,.012) 0 2px, transparent 2px 6px),
+      radial-gradient(120% 60% at 50% 0%, #10182a 0%, var(--bg) 60%);
+  }
+  main {
+    max-width: 440px; min-height: 100dvh; margin: 0 auto; display: flex; flex-direction: column;
+    padding: max(22px, env(safe-area-inset-top)) var(--pad) max(16px, env(safe-area-inset-bottom));
+  }
+
+  /* LED clock */
+  .clock {
+    position: relative; margin: 4px 0 0; padding: 14px 10px 12px; border-radius: 10px;
+    background: #03050a; border: 1px solid #141c2c;
+    box-shadow: inset 0 0 0 4px #0a0f19, inset 0 0 40px rgba(47,123,255,.08);
+  }
+  .digits {
+    font: 700 clamp(46px, 16.5vw, 76px)/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums; letter-spacing: .02em; text-align: center;
+    color: var(--led); text-shadow: 0 0 6px rgba(47,123,255,.9), 0 0 26px rgba(47,123,255,.45);
+    transition: opacity .4s;
+  }
+  .clock::after { /* LED dot grid */
+    content: ""; position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+    background: radial-gradient(circle, transparent 55%, rgba(3,5,10,.55) 60%) 0 0 / 4px 4px;
+  }
+  .stale .digits { opacity: .28; }
+  .paused .digits { animation: blink 1.2s steps(1) infinite; }
+  .zero .digits { color: #ff4d5e; text-shadow: 0 0 8px rgba(255,77,94,.9), 0 0 26px rgba(255,77,94,.4);
+    animation: blink .5s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  /* painter's tape */
+  .tape {
+    align-self: center; margin: 18px 0 26px; padding: 9px 22px 8px; transform: rotate(-1.6deg);
+    background: linear-gradient(180deg, rgba(255,255,255,.12), transparent 40%), var(--tape);
+    color: #0b1220; font: 700 clamp(17px, 5.2vw, 22px)/1 "Marker Felt", "Noteworthy", "Chalkboard SE", system-ui, sans-serif;
+    letter-spacing: .02em; text-transform: uppercase; white-space: nowrap;
+    clip-path: polygon(1% 6%, 4% 0, 97% 3%, 100% 10%, 99% 92%, 96% 100%, 3% 96%, 0 88%);
+    box-shadow: 0 2px 0 rgba(0,0,0,.25);
+  }
+
+  /* ticket */
+  .rail { position: relative; perspective: 800px; }
+  .ticket {
+    position: relative; background: var(--paper); color: var(--ink); padding: 14px 16px 26px;
+    border-radius: 2px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    --tooth: 9px;
+    -webkit-mask: linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat,
+                  conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(2 * var(--tooth)) var(--tooth) repeat-x;
+            mask: linear-gradient(#000 0 0) top / 100% calc(100% - var(--tooth)) no-repeat,
+                  conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / calc(2 * var(--tooth)) var(--tooth) repeat-x;
+  }
+  .ticket.fired { animation: fire .55s cubic-bezier(.5,0,.75,0) forwards; }
+  .ticket.fresh { animation: print .45s cubic-bezier(.2,.8,.2,1); }
+  @keyframes fire { to { transform: translateY(-140%) rotate(-3deg); opacity: 0; } }
+  @keyframes print { from { transform: translateY(18px); opacity: 0; } }
+  .head { display: flex; justify-content: space-between; font-size: 12px; letter-spacing: .12em; opacity: .75; }
+  .rule { border: 0; border-top: 2px dashed rgba(23,24,27,.35); margin: 10px 0 8px; }
+  textarea {
+    display: block; width: 100%; height: 6.2em; resize: none; border: 0; outline: 0; padding: 0;
+    background: transparent; color: var(--ink); caret-color: #c0262f;
+    font: 700 22px/1.25 ui-monospace, "SF Mono", Menlo, monospace; text-transform: uppercase;
+  }
+  textarea::placeholder { color: rgba(23,24,27,.28); }
+  .count { position: absolute; right: 16px; bottom: 16px; font-size: 11px; opacity: .45; }
+
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px 8px; margin: 22px 0 0; }
+  .chips button {
+    border: 0; padding: 7px 11px 6px; background: var(--tape); color: #0b1220; cursor: pointer;
+    font: 700 14px/1 "Marker Felt", "Noteworthy", "Chalkboard SE", system-ui, sans-serif; text-transform: uppercase;
+    clip-path: polygon(2% 8%, 5% 0, 96% 4%, 100% 12%, 98% 90%, 95% 100%, 4% 95%, 0 85%);
+  }
+  .chips button:nth-child(odd) { transform: rotate(-2deg); }
+  .chips button:nth-child(even) { transform: rotate(1.5deg); }
+  .chips button:active { filter: brightness(1.2); }
+
+  .spacer { flex: 1; min-height: 20px; }
+  .fire {
+    width: 100%; height: 64px; border: 0; border-radius: 6px; cursor: pointer;
+    background: linear-gradient(180deg, #ff5a3c, #d8321b); color: #fff;
+    font: 800 22px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .3em; padding-left: .3em;
+    box-shadow: 0 6px 0 #8f1d0d, 0 10px 24px rgba(216,50,27,.35); transition: transform .06s, box-shadow .06s;
+  }
+  .fire:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 2px 0 #8f1d0d; }
+  .fire:disabled { background: var(--steel); color: #6d7890; box-shadow: 0 6px 0 #0d1016; cursor: default; }
+  .fire.heard { background: linear-gradient(180deg, #2f7bff, #1f5fd1); box-shadow: 0 6px 0 #133b85; color: #fff; }
+  .err { animation: shake .35s; }
+  @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+
+  @media (min-height: 760px) { .tape { margin: 26px 0 32px; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
 <main>
-  <div class="kicker">THE BEAR · CHICAGO</div>
-  <h1>TIME LEFT TO TURN IT AROUND</h1>
-  <div class="clock" id="clock">--:--:--</div>
-  <div class="sub" id="sub">&nbsp;</div>
-  <div class="sign">EVERY SECOND COUNTS</div>
+  <div class="clock" id="clock"><div class="digits" id="digits">--:--:--</div></div>
+  <div class="tape">Every second counts</div>
 
   <form id="form" autocomplete="off">
-    <label for="text">FIRE A TICKET ONTO MY APRON</label>
-    <textarea id="text" maxlength="80" placeholder="YES CHEF"></textarea>
-    <div class="count"><span id="n">0</span>/80</div>
+    <div class="rail">
+      <div class="ticket" id="ticket">
+        <div class="head"><span id="num">#0000</span><span id="time"></span></div>
+        <hr class="rule">
+        <textarea id="text" maxlength="80" placeholder="YES CHEF" aria-label="Message for the clock" enterkeyhint="send"></textarea>
+        <span class="count" id="n"></span>
+      </div>
+    </div>
     <div class="chips" id="chips"></div>
-    <button class="fire" id="fire" type="submit">FIRE 🔥</button>
-    <div class="msg" id="msg"></div>
   </form>
-  <footer>BE NICE · KEEP IT KITCHEN-SAFE</footer>
+
+  <div class="spacer"></div>
+  <button class="fire" id="fire" form="form" type="submit">FIRE</button>
 </main>
 <script>
-// Two modes: on the public site, messages go through ntfy.sh to the clock.
-// Served by the clock itself over its own hotspot (http://192.168.4.1), it
-// talks to the board's local API instead.
+// Public site: messages go through ntfy.sh to the clock. Served by the clock's
+// own hotspot (http://192.168.4.1): talks to the board's local API instead.
 const GUEST_TOPIC = "bearclock-a2039d53";
 const NTFY = "https://ntfy.sh";
 const LOCAL = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
 const COOLDOWN_S = 15;
-const CHIPS = ["YES CHEF", "HEARD", "BEHIND!", "CORNER!", "LET IT RIP", "COUSIN!",
-               "86 THE RISOTTO", "HAPPY HALLOWEEN"];
+const STALE_MS = 5 * 60 * 1000;  // board reports every 2 min; 5 min of silence = offline
+const CHIPS = ["Yes chef", "Heard", "Behind", "Let it rip", "Cousin!"];
 
 const $ = (id) => document.getElementById(id);
-const text = $("text"), fire = $("fire"), msg = $("msg");
+const text = $("text"), fire = $("fire"), ticket = $("ticket");
+let sending = false, heardUntil = 0;
+
+// ---- ticket set dressing -----------------------------------------------------
+function newTicket() {
+  $("num").textContent = "#" + String(Math.floor(Math.random() * 9000) + 1000);
+  $("time").textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+newTicket();
 
 for (const c of CHIPS) {
   const b = document.createElement("button");
   b.type = "button";
   b.textContent = c;
-  b.onclick = () => { text.value = c; text.dispatchEvent(new Event("input")); };
+  b.onclick = () => { text.value = c.toUpperCase(); onInput(); };
   $("chips").appendChild(b);
 }
-text.addEventListener("input", () => { $("n").textContent = text.value.length; });
+function onInput() {
+  const n = text.value.length;
+  $("n").textContent = n > 50 ? `${n}/80` : "";
+  render();
+}
+text.addEventListener("input", onInput);
+text.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("form").requestSubmit(); }
+});
 
-function setMsg(t, cls) { msg.textContent = t; msg.className = "msg " + (cls || ""); }
+// ---- board status ------------------------------------------------------------
+let base = null;  // {remaining, running, guests, at}
+
+function online() {
+  if (!base) return true;  // unknown yet: let them try
+  return Date.now() - base.at < STALE_MS && base.guests !== false;
+}
 
 function cooldownLeft() {
-  const until = +localStorage.getItem("bear_until") || 0;
-  return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  return Math.max(0, Math.ceil(((+localStorage.getItem("bear_until") || 0) - Date.now()) / 1000));
 }
-function tickCooldown() {
-  const left = cooldownLeft();
-  fire.disabled = left > 0;
-  fire.textContent = left > 0 ? `NEXT TICKET IN ${left}s` : "FIRE 🔥";
-  if (left > 0) setTimeout(tickCooldown, 500);
+
+// Single place that decides what the button and clock show.
+function render() {
+  const cd = cooldownLeft();
+  let label = "FIRE", disabled = false, cls = "";
+  if (sending) { label = "···"; disabled = true; }
+  else if (Date.now() < heardUntil) { label = "HEARD"; disabled = true; cls = "heard"; }
+  else if (!online()) { label = "86'D"; disabled = true; }
+  else if (cd) { label = `0:${String(cd).padStart(2, "0")}`; disabled = true; }
+  fire.textContent = label;
+  fire.disabled = disabled;
+  fire.className = "fire " + cls;
+
+  const clock = $("clock");
+  if (!base) return;
+  const stale = Date.now() - base.at >= STALE_MS;
+  const el = base.running ? (Date.now() - base.at) / 1000 : 0;
+  const s = Math.max(0, Math.ceil(base.remaining - el));
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
+  $("digits").textContent = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  clock.className = "clock" + (stale ? " stale" : !base.running ? " paused" : s === 0 ? " zero" : "");
+}
+setInterval(render, 250);
+
+function accept(st, atMs) {
+  if (typeof st.remaining !== "number") return;
+  base = { remaining: st.remaining, running: !!st.running, guests: st.guests, at: atMs };
+  render();
+}
+
+function onNtfyLine(line) {
+  try {
+    const m = JSON.parse(line);
+    // ntfy time is whole seconds; never let a reading appear to come from the future.
+    if (m.event === "message") accept(JSON.parse(m.message), Math.min(m.time * 1000, Date.now()));
+  } catch (e) {}
+}
+
+if (LOCAL) {
+  (async function poll() {
+    try {
+      const r = await fetch("/api/state", { cache: "no-store" });
+      accept(await r.json(), Date.now());
+    } catch (e) {}
+    setTimeout(poll, 2000);
+  })();
+} else {
+  const topic = `${GUEST_TOPIC}-status`;
+  fetch(`${NTFY}/${topic}/json?poll=1&since=latest`).then((r) => r.text())
+    .then((b) => { const l = b.trim().split("\n").pop(); if (l) onNtfyLine(l); }).catch(() => {});
+  new EventSource(`${NTFY}/${topic}/sse`).onmessage = (ev) => onNtfyLine(ev.data);
+}
+
+// ---- send --------------------------------------------------------------------
+function fail() {
+  ticket.classList.remove("err");
+  void ticket.offsetWidth;
+  ticket.classList.add("err");
 }
 
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const t = text.value.trim().toUpperCase();
-  if (!t) { setMsg("Write something first, chef.", "err"); return; }
-  if (cooldownLeft()) return;
-  fire.disabled = true;
-  setMsg("Firing…");
+  const t = text.value.trim().replace(/\s+/g, " ").toUpperCase();
+  if (!t || fire.disabled) { fail(); return; }
+  sending = true;
+  render();
   try {
-    const url = LOCAL ? "/api/msg" : `${NTFY}/${GUEST_TOPIC}`;
-    const r = await fetch(url, { method: "POST", body: t });
+    const r = await fetch(LOCAL ? "/api/msg" : `${NTFY}/${GUEST_TOPIC}`, { method: "POST", body: t });
     if (!r.ok) throw new Error(r.status);
     localStorage.setItem("bear_until", Date.now() + COOLDOWN_S * 1000);
-    text.value = "";
-    $("n").textContent = 0;
-    setMsg("HEARD! Watch the apron.", "ok");
+    navigator.vibrate?.(30);
+    text.blur();
+    ticket.classList.add("fired");
+    setTimeout(() => {
+      ticket.classList.remove("fired");
+      text.value = "";
+      onInput();
+      newTicket();
+      ticket.classList.add("fresh");
+      setTimeout(() => ticket.classList.remove("fresh"), 500);
+    }, 560);
+    heardUntil = Date.now() + 1800;
   } catch (err) {
-    setMsg("Didn't go through — try again.", "err");
+    fail();
   }
-  tickCooldown();
+  sending = false;
+  render();
 });
-tickCooldown();
-
-// ---- live countdown mirror -------------------------------------------------
-let base = null;  // {remaining, running, at: ms timestamp of the reading}
-
-function fmt(s) {
-  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-}
-function draw() {
-  if (!base) return;
-  const el = base.running ? (Date.now() - base.at) / 1000 : 0;
-  const s = Math.max(0, Math.ceil(base.remaining - el));
-  $("clock").textContent = fmt(s);
-  $("clock").classList.toggle("paused", !base.running);
-  $("sub").textContent = s === 0 && base.running ? "TIME'S UP" : base.running ? "" : "CLOCK PAUSED";
-}
-setInterval(draw, 250);
-
-function accept(st, atMs) {
-  if (typeof st.remaining !== "number") return;
-  base = { remaining: st.remaining, running: !!st.running, at: atMs };
-  draw();
-}
-
-async function pollLocal() {
-  try {
-    const r = await fetch("/api/state", { cache: "no-store" });
-    accept(await r.json(), Date.now());
-  } catch (e) {}
-  setTimeout(pollLocal, 2000);
-}
-
-function subscribeNtfy() {
-  const topic = `${GUEST_TOPIC}-status`;
-  // Latest cached status first, then live updates.
-  fetch(`${NTFY}/${topic}/json?poll=1&since=latest`).then((r) => r.text()).then((body) => {
-    const line = body.trim().split("\n").pop();
-    if (!line) return;
-    const m = JSON.parse(line);
-    if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000);
-  }).catch(() => {});
-  const es = new EventSource(`${NTFY}/${topic}/sse`);
-  es.onmessage = (ev) => {
-    try {
-      const m = JSON.parse(ev.data);
-      if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000);
-    } catch (e) {}
-  };
-}
-
-LOCAL ? pollLocal() : subscribeNtfy();
 </script>
 </body>
 </html>
