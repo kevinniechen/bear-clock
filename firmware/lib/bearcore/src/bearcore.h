@@ -30,6 +30,8 @@ struct Frame {
 
 constexpr int MAX_TEXT = 120;     // max chars of any displayed message
 constexpr int MAX_QUEUE = 8;      // pending guest messages
+constexpr int MAX_NAME = 16;      // guest name length
+constexpr int MAX_HISTORY = 24;   // past guest messages kept for replay
 constexpr int MAX_PHRASES = 12;   // rotating Bear phrases
 constexpr uint32_t MAX_SEC = 9999u * 3600;  // longest settable countdown
 
@@ -39,7 +41,8 @@ struct Settings {
   RGB color = {30, 110, 255};       // main digit color (Bear blue)
   RGB textColor = {150, 210, 255};  // ticker text color
   bool guestMessages = true;        // accept messages from the QR page
-  bool filter = true;               // mask profanity in guest messages
+  bool filter = true;               // drop hateful guest messages
+  bool replay = true;               // mix past guest messages into the ticker
   uint16_t flashEverySec = 40;      // full-screen phrase flash period (0=off)
   bool ghostSegments = true;        // dim unlit 7-segment bars
   uint8_t guestRepeats = 2;         // times each guest message scrolls
@@ -52,16 +55,17 @@ struct Settings {
 // emoji and other glyphs dropped), collapses whitespace, trims, and caps at
 // MAX_TEXT chars. Returns length written to out (out must hold MAX_TEXT+1).
 size_t sanitize(const char* in, char* out);
-// Masks blocked words in place with '*'. Returns true if anything was masked.
-bool maskProfanity(char* s);
+// Loose filter: true for slurs/hate (n-word, f-slur, ...). Ordinary swearing passes.
+bool isHateful(const char* s);
 int textWidth(const char* s, int scale = 1);  // pixels, 6px per char at scale 1
 
 // Clock ----------------------------------------------------------------------
 
-enum class Kind : uint8_t { Phrase, Guest, Flash };
+enum class Kind : uint8_t { Phrase, Guest, Replay };
 
 struct Message {
   char text[MAX_TEXT + 1];
+  char from[MAX_NAME + 1];  // "" = anonymous
   Kind kind;
 };
 
@@ -87,11 +91,20 @@ class BearClock {
   bool running() const { return running_; }
 
   // Messages.
-  bool pushGuest(const char* rawText, uint32_t nowMs);  // false if dropped
+  // false if dropped (guests off, queue full, empty, or hateful).
+  bool pushGuest(const char* rawText, const char* rawFrom, uint32_t nowMs);
   void flashNow(const char* rawText, uint32_t nowMs);
-  void skip(uint32_t nowMs);
+  void skip(uint32_t nowMs);  // a skipped guest message is also dropped from replay
   void clearQueue(uint32_t nowMs);
   int queueLength() const { return qCount_; }
+
+  // Replay history (newest last). historyVersion() changes on every edit so the
+  // firmware knows when to persist it.
+  int historyCount() const { return hCount_; }
+  const Message& history(int i) const { return history_[(hHead_ + i) % MAX_HISTORY]; }
+  void restoreHistory(const Message* msgs, int n);
+  void clearHistory();
+  uint32_t historyVersion() const { return histVer_; }
 
   // Phrases (rotating ticker + periodic flashes).
   void setPhrases(const char* const* list, int n);
@@ -103,6 +116,7 @@ class BearClock {
 
   // For status reporting.
   const char* currentText() const { return cur_.text; }
+  const char* currentFrom() const { return cur_.from; }
 
  private:
   // timer
@@ -118,6 +132,14 @@ class BearClock {
   uint32_t curStartMs_ = 0;
   int curPasses_ = 0;          // passes left for cur_
   int nextPhrase_ = 0;
+  bool replayTurn_ = false;    // idle ticker alternates phrase / replay
+  int nextReplay_ = 0;
+
+  Message history_[MAX_HISTORY];
+  int hHead_ = 0, hCount_ = 0;
+  uint32_t histVer_ = 0;
+  void addHistory(const Message& m);
+  void removeHistory(const Message& m);
 
   // takeover (full-screen flash)
   bool takeover_ = false;

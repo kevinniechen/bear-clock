@@ -1,5 +1,6 @@
 #include "bearcore.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "font5x7.h"
@@ -130,22 +131,26 @@ size_t sanitize(const char* in, char* out) {
   return n;
 }
 
+// Loose, party-grade filter: swearing is fine, slurs and hate are not.
 // Roots matched anywhere inside a word (after leetspeak normalizing).
-static const char* const BAD_SUBSTR[] = {
-    "fuck", "fuk", "fck", "cunt", "shit", "nigg", "niga", "fagg", "retard",
-    "whore", "slut", "bitch", "kike", "chink", "tranny", "twat", "pussy",
-    "asshole", "rape",
+static const char* const HATE_SUBSTR[] = {
+    "nigg", "niga", "fagg", "fagot", "kike", "chink", "tranny", "retard",
+    "wetback", "raghead", "towelhead", "beaner",
 };
-// Words matched only exactly (they're common inside innocent words).
-static const char* const BAD_EXACT[] = {
-    "fag", "fags", "spic", "spics", "cock", "cocks", "dick", "dicks", "cum",
-    "tits", "ass", "nazi",
+// Words matched only exactly (they occur inside innocent words: "spicy",
+// "raccoon", "grape", "therapist").
+static const char* const HATE_EXACT[] = {
+    "fag", "fags", "spic", "spics", "coon", "coons", "gook", "gooks",
+    "rape", "raped", "rapes", "rapist", "kys", "heil",
 };
+// Also checked against the whole message with spaces/punctuation removed,
+// to catch "n i g g a" style spacing.
+static const char* const HATE_SPACED[] = {"nigger", "nigga", "faggot"};
 
 static char leet(char c) {
   switch (c) {
     case '0': return 'o';
-    case '1': case '!': return 'i';
+    case '1': case '!': case '|': return 'i';
     case '3': return 'e';
     case '4': case '@': return 'a';
     case '5': case '$': return 's';
@@ -156,32 +161,33 @@ static char leet(char c) {
 
 static bool wordChar(char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-         c == '@' || c == '$' || c == '!' || c == '*';
+         c == '@' || c == '$' || c == '!' || c == '|';
 }
 
-bool maskProfanity(char* s) {
-  bool any = false;
-  for (char* p = s; *p;) {
+bool isHateful(const char* s) {
+  char all[MAX_TEXT + 1];
+  int na = 0;
+  for (const char* p = s; *p;) {
     if (!wordChar(*p)) { p++; continue; }
-    char* start = p;
+    const char* start = p;
     char norm[MAX_TEXT + 1];
     int n = 0;
-    while (*p && wordChar(*p)) {
-      norm[n++] = leet(*p);
-      p++;
-    }
+    while (*p && wordChar(*p) && n < MAX_TEXT) norm[n++] = leet(*p++);
+    while (*p && wordChar(*p)) p++;
     // Trailing '!' is punctuation, not a leet 'i' ("HEARD!").
     while (n > 0 && start[n - 1] == '!') n--;
     norm[n] = 0;
-    bool bad = false;
-    for (const char* w : BAD_SUBSTR) bad |= strstr(norm, w) != nullptr;
-    for (const char* w : BAD_EXACT) bad |= strcmp(norm, w) == 0;
-    if (bad) {
-      any = true;
-      for (int i = 1; i < n; i++) start[i] = '*';
-    }
+    for (const char* w : HATE_SUBSTR)
+      if (strstr(norm, w)) return true;
+    for (const char* w : HATE_EXACT)
+      if (!strcmp(norm, w)) return true;
+    for (int i = 0; i < n && na < MAX_TEXT; i++)
+      if (norm[i] >= 'a' && norm[i] <= 'z') all[na++] = norm[i];
   }
-  return any;
+  all[na] = 0;
+  for (const char* w : HATE_SPACED)
+    if (strstr(all, w)) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +214,8 @@ BearClock::BearClock() {
   setPhrases(DEFAULT_PHRASES, sizeof(DEFAULT_PHRASES) / sizeof(DEFAULT_PHRASES[0]));
   setDuration(settings.durationSec);
   cur_.text[0] = 0;
+  cur_.from[0] = 0;
+  cur_.kind = Kind::Phrase;
   takeText_[0] = 0;
 }
 
@@ -263,13 +271,18 @@ void BearClock::setPhrases(const char* const* list, int n) {
   nextPhrase_ = nextFlashPhrase_ = 0;
 }
 
-bool BearClock::pushGuest(const char* raw, uint32_t nowMs) {
+bool BearClock::pushGuest(const char* raw, const char* rawFrom, uint32_t nowMs) {
   if (!settings.guestMessages || qCount_ >= MAX_QUEUE) return false;
   Message& m = queue_[(qHead_ + qCount_) % MAX_QUEUE];
   if (sanitize(raw, m.text) == 0) return false;
-  if (settings.filter) maskProfanity(m.text);
+  char name[MAX_TEXT + 1];
+  sanitize(rawFrom ? rawFrom : "", name);
+  memcpy(m.from, name, MAX_NAME);
+  m.from[MAX_NAME] = 0;
+  if (settings.filter && (isHateful(m.text) || isHateful(m.from))) return false;
   m.kind = Kind::Guest;
   qCount_++;
+  addHistory(m);
   // Interrupt a phrase so guests see their message right away.
   if (!haveCur_ || cur_.kind != Kind::Guest) {
     startTakeover("NEW TICKET", nowMs, 1300);
@@ -286,10 +299,51 @@ void BearClock::flashNow(const char* raw, uint32_t nowMs) {
 
 void BearClock::skip(uint32_t nowMs) {
   takeover_ = false;
+  if (haveCur_ && cur_.kind != Kind::Phrase) removeHistory(cur_);
   nextTicker(nowMs);
 }
 
+static bool sameMessage(const Message& a, const Message& b) {
+  return !strcmp(a.text, b.text) && !strcmp(a.from, b.from);
+}
+
+void BearClock::addHistory(const Message& m) {
+  removeHistory(m);  // no duplicates; a repeat moves to newest
+  Message& slot = history_[(hHead_ + hCount_) % MAX_HISTORY];
+  if (hCount_ < MAX_HISTORY) hCount_++;
+  else hHead_ = (hHead_ + 1) % MAX_HISTORY;  // overwrite oldest
+  slot = m;
+  slot.kind = Kind::Replay;
+  histVer_++;
+}
+
+void BearClock::removeHistory(const Message& m) {
+  int w = 0;
+  bool removed = false;
+  for (int r = 0; r < hCount_; r++) {
+    const Message& h = history_[(hHead_ + r) % MAX_HISTORY];
+    if (sameMessage(h, m)) { removed = true; continue; }
+    if (w != r) history_[(hHead_ + w) % MAX_HISTORY] = h;
+    w++;
+  }
+  if (removed) { hCount_ = w; histVer_++; }
+}
+
+void BearClock::restoreHistory(const Message* msgs, int n) {
+  hHead_ = hCount_ = 0;
+  for (int i = 0; i < n; i++)
+    if (msgs[i].text[0]) addHistory(msgs[i]);
+}
+
+void BearClock::clearHistory() {
+  hHead_ = hCount_ = 0;
+  histVer_++;
+  if (haveCur_ && cur_.kind == Kind::Replay) haveCur_ = false;
+}
+
 void BearClock::clearQueue(uint32_t nowMs) {
+  // Clearing is for spam, so cleared messages don't come back as replays either.
+  for (int i = 0; i < qCount_; i++) removeHistory(queue_[(qHead_ + i) % MAX_QUEUE]);
   qCount_ = 0;
   if (haveCur_ && cur_.kind == Kind::Guest) nextTicker(nowMs);
 }
@@ -308,8 +362,14 @@ static const int TICKER_Y = 23;
 static const int SCROLL_PX_PER_S = 30;
 static const uint32_t HOLD_MS = 3500;
 
-static uint32_t passMs(const char* t) {
-  int tw = textWidth(t);
+// Ticker line for a message: "NAME: text" when it has a name.
+static int tickerWidth(const Message& m) {
+  int n = (int)strlen(m.text) + (m.from[0] ? (int)strlen(m.from) + 2 : 0);
+  return n ? n * 6 - 1 : 0;
+}
+
+static uint32_t passMs(const Message& m) {
+  int tw = tickerWidth(m);
   if (tw <= W) return HOLD_MS;
   return (uint32_t)(W + tw) * 1000u / SCROLL_PX_PER_S;
 }
@@ -321,13 +381,22 @@ void BearClock::nextTicker(uint32_t nowMs) {
     qHead_ = (qHead_ + 1) % MAX_QUEUE;
     qCount_--;
     curPasses_ = settings.guestRepeats ? settings.guestRepeats : 1;
+  } else if (settings.replay && hCount_ > 0 && (replayTurn_ || nPhrases_ == 0)) {
+    // Oldest to newest, then around again.
+    nextReplay_ %= hCount_;
+    cur_ = history_[(hHead_ + nextReplay_++) % MAX_HISTORY];
+    curPasses_ = 1;
+    replayTurn_ = false;
   } else if (nPhrases_ > 0) {
     nextPhrase_ %= nPhrases_;
     strcpy(cur_.text, phrases_[nextPhrase_++]);
+    cur_.from[0] = 0;
     cur_.kind = Kind::Phrase;
     curPasses_ = 1;
+    replayTurn_ = true;
   } else {
     cur_.text[0] = 0;
+    cur_.from[0] = 0;
     cur_.kind = Kind::Phrase;
     curPasses_ = 1;
   }
@@ -335,7 +404,7 @@ void BearClock::nextTicker(uint32_t nowMs) {
 }
 
 bool BearClock::tickerDone(uint32_t nowMs) const {
-  return nowMs - curStartMs_ >= passMs(cur_.text) * (uint32_t)curPasses_;
+  return nowMs - curStartMs_ >= passMs(cur_) * (uint32_t)curPasses_;
 }
 
 // --- takeover word wrap
@@ -479,19 +548,25 @@ void BearClock::drawClock(uint32_t nowMs, Frame& f) {
 }
 
 void BearClock::drawTicker(uint32_t nowMs, Frame& f) {
-  const char* t = cur_.text;
-  if (!*t) return;
-  RGB c = cur_.kind == Kind::Guest ? GUEST : settings.textColor;
-  int tw = textWidth(t);
-  uint32_t el = nowMs - curStartMs_;
+  if (!cur_.text[0]) return;
+  bool guest = cur_.kind != Kind::Phrase;
+  // Live guest messages in bright white, replays a little softer; names in blue.
+  RGB c = !guest ? settings.textColor : cur_.kind == Kind::Guest ? GUEST : scale(GUEST, 3, 4);
+  int tw = tickerWidth(cur_);
+  int x;
   if (tw <= W) {
-    drawText(f, (W - tw) / 2, TICKER_Y, t, c);
+    x = (W - tw) / 2;
   } else {
-    uint32_t pm = passMs(t);
-    uint32_t inPass = el % pm;
-    int x = W - (int)(inPass * SCROLL_PX_PER_S / 1000);
-    drawText(f, x, TICKER_Y, t, c);
+    uint32_t inPass = (nowMs - curStartMs_) % passMs(cur_);
+    x = W - (int)(inPass * SCROLL_PX_PER_S / 1000);
   }
+  if (cur_.from[0]) {
+    char prefix[MAX_NAME + 3];
+    snprintf(prefix, sizeof(prefix), "%s: ", cur_.from);
+    drawText(f, x, TICKER_Y, prefix, settings.textColor);
+    x += (int)strlen(prefix) * 6;
+  }
+  drawText(f, x, TICKER_Y, cur_.text, c);
 }
 
 void BearClock::drawTakeover(uint32_t nowMs, Frame& f) {

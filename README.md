@@ -51,12 +51,20 @@ Admin link (keep private, it's the key):
 
 ## Controls
 
+- **Bad message on the panel?** The admin page has a big red **SKIP** pinned at the top.
+  Skipping deletes it from replay too. **CLEAR QUEUE** drops everything waiting (also from replay).
+  On the board, the thumb wheel's K2 also skips.
+- **Guests** enter their name once (remembered on their phone). Messages show as `NAME: text`.
+  Past messages replay between phrases, last 24 kept across reboots. **Forget all** wipes them.
+- **Filter** is party-grade: swearing goes through, slurs/hate are dropped (list in
+  `bearcore.cpp`, tests in `sim/sim.cpp`). Dropped messages don't show at all.
+
 - **BOOT button:** tap = start/pause, hold 2 s = reset.
 - **Thumb wheel** (PCA9557, unverified): K1 like BOOT, K2 = skip message, K3 = flash a phrase.
   Serial prints `button N short/long` so you can learn which is which.
 - **Admin commands** (JSON over ntfy admin topic, `/api/cmd?pin=`, or serial):
   `start` `pause` `toggle` `reset` `set{h,m,s,start}` `remaining{sec}` `add{sec}`
-  `flash{text}` `msg{text}` `skip` `clear` `guests{on}` `filter{on}` `brightness{v}`
+  `flash{text}` `msg{text,name}` `skip` `clear` `replay{on}` `clearhistory` `guests{on}` `filter{on}` `brightness{v}`
   `color{hex}` `textcolor{hex}` `flashevery{sec}` `repeats{n}` `ghost{on}` `zero{text}`
   `phrases{list}` `status` `restart`.
 

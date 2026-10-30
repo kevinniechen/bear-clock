@@ -36,12 +36,24 @@
     border: 1px solid #2a3c63; padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; }
   .toast.show { opacity: 1; }
   .setup { color: #ffb4b4; }
+  /* Always-reachable kill switch for a bad message. */
+  .panic { position: sticky; top: 0; z-index: 5; display: flex; gap: 8px; padding: 10px 0;
+    background: linear-gradient(var(--bg) 80%, transparent); }
+  .panic button { padding: 16px 10px; font-size: 17px; }
+  .panic .skip { flex: 2; background: #d8321b; border-color: #d8321b; }
+  .now { text-align: center; color: var(--mute); font-size: 12px; min-height: 1.3em; margin: -2px 0 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
 <main>
+  <div class="panic">
+    <button class="skip" data-cmd='{"cmd":"skip"}'>SKIP</button>
+    <button class="warn" data-confirm="Drop every waiting message?" data-cmd='{"cmd":"clear"}'>CLEAR QUEUE</button>
+  </div>
   <div class="clock" id="clock">--:--:--</div>
   <div class="meta" id="meta"><span class="dot" id="dot"></span>waiting for clock…</div>
+  <div class="now" id="now"></div>
   <div class="setup" id="setup" hidden></div>
 
   <section>
@@ -77,10 +89,6 @@
       <button class="primary" id="flash">Flash full-screen</button>
       <button id="post">Scroll as message</button>
     </div>
-    <div class="row">
-      <button data-cmd='{"cmd":"skip"}'>Skip current</button>
-      <button data-cmd='{"cmd":"clear"}'>Clear queue</button>
-    </div>
   </section>
 
   <section>
@@ -90,8 +98,13 @@
       <button class="warn" data-cmd='{"cmd":"guests","on":false}'>Guests OFF</button>
     </div>
     <div class="row">
-      <button data-cmd='{"cmd":"filter","on":true}'>Filter ON</button>
-      <button data-cmd='{"cmd":"filter","on":false}'>Filter OFF</button>
+      <button data-cmd='{"cmd":"replay","on":true}'>Replay ON</button>
+      <button data-cmd='{"cmd":"replay","on":false}'>Replay OFF</button>
+      <button class="warn" data-confirm="Forget all past guest messages?" data-cmd='{"cmd":"clearhistory"}'>Forget all</button>
+    </div>
+    <div class="row">
+      <button data-cmd='{"cmd":"filter","on":true}'>Slur filter ON</button>
+      <button data-cmd='{"cmd":"filter","on":false}'>Slur filter OFF</button>
       <label>repeats</label><input type="number" id="rep" min="1" max="5" value="2">
       <button id="setRep" style="flex:0">Set</button>
     </div>
@@ -202,7 +215,7 @@ $("setDur").onclick = () => send({ cmd: "set", ...hms() });
 $("setGo").onclick = () => send({ cmd: "set", ...hms(), start: true });
 $("setRem").onclick = () => { const t = hms(); send({ cmd: "remaining", sec: t.h * 3600 + t.m * 60 + t.s }); };
 $("flash").onclick = () => $("say").value.trim() && send({ cmd: "flash", text: $("say").value.trim().toUpperCase() });
-$("post").onclick = () => $("say").value.trim() && send({ cmd: "msg", text: $("say").value.trim() });
+$("post").onclick = () => $("say").value.trim() && send({ cmd: "msg", name: "CHEF", text: $("say").value.trim() });
 $("setRep").onclick = () => send({ cmd: "repeats", n: +$("rep").value });
 $("setFe").onclick = () => send({ cmd: "flashevery", sec: +$("fe").value });
 $("setCol").onclick = async () => {
@@ -238,13 +251,14 @@ function draw() {
   const st = base.st;
   $("dot").className = "dot" + (ago < 35 * 60 ? " on" : "");
   $("meta").lastChild.textContent =
-    `${st.running ? "running" : "paused"} · queue ${st.queue} · guests ${st.guests ? "on" : "off"}` +
+    `${st.running ? "running" : "paused"} · queue ${st.queue} · replay ${st.history ?? 0} · guests ${st.guests ? "on" : "off"}` +
     ` · ${st.wifi || "no wifi"} · seen ${ago}s ago`;
 }
 setInterval(draw, 250);
 function accept(st, atMs) {
   if (typeof st.remaining !== "number") return;
   base = { remaining: st.remaining, running: !!st.running, at: atMs, st };
+  $("now").textContent = st.current ? `showing: ${st.from ? st.from + ": " : ""}${st.current}` : "";
   lastSeen = atMs;
   if (st.brightness) $("bri").value = st.brightness;
   draw();

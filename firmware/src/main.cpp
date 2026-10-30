@@ -47,6 +47,8 @@ struct Status {
   bool running;
   int queue;
   char current[bear::MAX_TEXT + 1];
+  char from[bear::MAX_NAME + 1];
+  int history;
   uint8_t brightness;
   bool guests;
 };
@@ -81,6 +83,8 @@ static String statusJson() {
   d["running"] = s.running;
   d["queue"] = s.queue;
   d["current"] = s.current;
+  d["from"] = s.from;
+  d["history"] = s.history;
   d["brightness"] = s.brightness;
   d["guests"] = s.guests;
   d["wifi"] = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : String("");
@@ -168,7 +172,7 @@ static void panelShow() {
 // Persistence (NVS)
 
 static Preferences prefs;
-static const uint32_t SETTINGS_VERSION = 1;
+static const uint32_t SETTINGS_VERSION = 2;  // bump when Settings changes
 static uint32_t lastSavedRemSec = UINT32_MAX;
 static bool lastSavedRunning = false;
 
@@ -232,6 +236,27 @@ static void loadState() {
   }
   lastSavedRemSec = clk.remainingMs(millis()) / 1000;
   lastSavedRunning = clk.running();
+
+  size_t hn = prefs.getBytesLength("hist");
+  if (hn && hn % sizeof(bear::Message) == 0 && hn <= sizeof(bear::Message) * bear::MAX_HISTORY) {
+    static bear::Message buf[bear::MAX_HISTORY];
+    prefs.getBytes("hist", buf, hn);
+    for (auto& m : buf) { m.text[bear::MAX_TEXT] = 0; m.from[bear::MAX_NAME] = 0; }
+    clk.restoreHistory(buf, hn / sizeof(bear::Message));
+  }
+}
+
+// Replay history survives reboots; written at most every 5 s when it changes.
+static void saveHistory(uint32_t nowMs) {
+  static uint32_t savedVer = 0, lastMs = 0;
+  if (clk.historyVersion() == savedVer || nowMs - lastMs < 5000) return;
+  static bear::Message buf[bear::MAX_HISTORY];
+  int n = clk.historyCount();
+  for (int i = 0; i < n; i++) buf[i] = clk.history(i);
+  if (n) prefs.putBytes("hist", buf, n * sizeof(bear::Message));
+  else prefs.remove("hist");
+  savedVer = clk.historyVersion();
+  lastMs = nowMs;
 }
 
 // ---------------------------------------------------------------------------
@@ -277,10 +302,12 @@ static bool applyAdmin(JsonDocument& d, uint32_t now) {
     // Admin-posted message: bypasses the guests-off switch.
     bool g = st.guestMessages;
     st.guestMessages = true;
-    clk.pushGuest(d["text"] | "", now);
+    clk.pushGuest(d["text"] | "", d["name"] | "", now);
     st.guestMessages = g;
   } else if (!strcmp(cmd, "skip")) clk.skip(now);
   else if (!strcmp(cmd, "clear")) clk.clearQueue(now);
+  else if (!strcmp(cmd, "replay")) { st.replay = d["on"] | true; settingsChanged = true; }
+  else if (!strcmp(cmd, "clearhistory")) clk.clearHistory();
   else if (!strcmp(cmd, "guests")) { st.guestMessages = d["on"] | true; settingsChanged = true; }
   else if (!strcmp(cmd, "filter")) { st.filter = d["on"] | true; settingsChanged = true; }
   else if (!strcmp(cmd, "brightness")) {
@@ -332,7 +359,12 @@ static bool applyAdmin(JsonDocument& d, uint32_t now) {
 
 static void handleCmd(const Cmd& c, uint32_t now) {
   if (!c.admin) {
-    bool ok = clk.pushGuest(c.body, now);
+    // Guest page sends {"n": name, "t": text}; anything else is plain text.
+    JsonDocument d;
+    bool json = c.body[0] == '{' && !deserializeJson(d, c.body) && d["t"].is<const char*>();
+    const char* text = json ? d["t"].as<const char*>() : c.body;
+    const char* name = json ? (d["n"] | "") : "";
+    bool ok = clk.pushGuest(text, name, now);
     Serial.printf("guest msg %s: %s\n", ok ? "queued" : "dropped", c.body);
     return;
   }
@@ -652,6 +684,7 @@ void loop() {
   clk.render(now, frame);
   panelShow();
   saveTimer(now, false);
+  saveHistory(now);
 
   portENTER_CRITICAL(&statusMux);
   status.remSec = (clk.remainingMs(now) + 999) / 1000;
@@ -659,6 +692,8 @@ void loop() {
   status.running = clk.running();
   status.queue = clk.queueLength();
   strlcpy(status.current, clk.currentText(), sizeof(status.current));
+  strlcpy(status.from, clk.currentFrom(), sizeof(status.from));
+  status.history = clk.historyCount();
   status.brightness = clk.settings.brightness;
   status.guests = clk.settings.guestMessages;
   portEXIT_CRITICAL(&statusMux);

@@ -27,12 +27,9 @@ static void checkSanitize(const char* in, const char* want) {
   }
 }
 
-static void checkMask(const char* in, const char* want) {
-  char s[MAX_TEXT + 1];
-  sanitize(in, s);
-  maskProfanity(s);
-  if (strcmp(s, want)) {
-    fprintf(stderr, "FAIL mask(\"%s\") = \"%s\", want \"%s\"\n", in, s, want);
+static void checkHate(const char* in, bool want) {
+  if (isHateful(in) != want) {
+    fprintf(stderr, "FAIL isHateful(\"%s\") = %d, want %d\n", in, !want, want);
     failures++;
   }
 }
@@ -60,14 +57,28 @@ static int runTests() {
     CHECK(strlen(out) == (size_t)MAX_TEXT);
   }
 
-  // profanity
-  checkMask("what the fuck", "what the f***");
-  checkMask("SH1T happens", "S*** happens");
-  checkMask("cocktail hour", "cocktail hour");
-  checkMask("spicy food", "spicy food");
-  checkMask("HEARD!", "HEARD!");
-  checkMask("Assume nothing, class", "Assume nothing, class");
-  checkMask("dick", "d***");
+  // filter: party-grade. Swearing passes, slurs don't.
+  checkHate("what the fuck", false);
+  checkHate("SHIT YES CHEF", false);
+  checkHate("bitch please", false);
+  checkHate("dick move cousin", false);
+  checkHate("cocktail hour", false);
+  checkHate("spicy food", false);
+  checkHate("raccoon costume", false);
+  checkHate("grapes and drapes", false);
+  checkHate("my therapist says hi", false);
+  checkHate("Nigeria represent", false);
+  checkHate("HEARD!", false);
+  checkHate("grammar nazi", false);
+  checkHate("nigga", true);
+  checkHate("N1GG3R", true);
+  checkHate("n i g g a", true);
+  checkHate("n.i.g.g.e.r", true);
+  checkHate("you fag", true);
+  checkHate("FAGGOTS", true);
+  checkHate("retarded", true);
+  checkHate("kys", true);
+  checkHate("spic", true);
 
   // timer
   BearClock c;
@@ -102,22 +113,66 @@ static int runTests() {
   q.settings.flashEverySec = 0;
   Frame f;
   q.render(0, f);
-  for (int i = 0; i < MAX_QUEUE; i++) CHECK(q.pushGuest("hi", 10));
-  CHECK(!q.pushGuest("overflow", 10));
-  CHECK(!q.pushGuest("\xF0\x9F\x90\xBB", 10));  // empty after sanitize
+  for (int i = 0; i < MAX_QUEUE; i++) CHECK(q.pushGuest("hi", "", 10));
+  CHECK(!q.pushGuest("overflow", "", 10));
+  CHECK(!q.pushGuest("\xF0\x9F\x90\xBB", "", 10));  // empty after sanitize
   q.clearQueue(10);
   CHECK(q.queueLength() == 0);
   q.settings.guestMessages = false;
-  CHECK(!q.pushGuest("off", 10));
+  CHECK(!q.pushGuest("off", "", 10));
 
   // Guest message becomes current after the NEW TICKET card.
   BearClock g;
   g.settings.flashEverySec = 0;
   g.render(0, f);
-  g.pushGuest("hello bear", 100);
+  g.pushGuest("hello bear", "Sam", 100);
   g.render(200, f);
   g.render(2000, f);
   CHECK(strcmp(g.currentText(), "hello bear") == 0);
+  CHECK(strcmp(g.currentFrom(), "Sam") == 0);
+  CHECK(!g.pushGuest("nigga", "Sam", 2100));      // hateful text dropped
+  CHECK(!g.pushGuest("hi", "n1gger", 2100));      // hateful name dropped
+  CHECK(g.historyCount() == 1);
+
+  // Replay: once live messages are done, old ones alternate with phrases.
+  BearClock rp;
+  rp.settings.flashEverySec = 0;
+  rp.settings.guestRepeats = 1;
+  rp.render(0, f);
+  rp.pushGuest("first", "Ann", 0);
+  rp.pushGuest("second", "Bo", 0);
+  int replays = 0, phrases = 0;
+  bool sawFirst = false;
+  for (uint32_t t = 0; t < 600000; t += 100) {
+    rp.render(t, f);
+    if (t > 60000 && t % 5000 == 0) {
+      if (!strcmp(rp.currentFrom(), "Ann") || !strcmp(rp.currentFrom(), "Bo")) replays++;
+      else phrases++;
+      sawFirst |= !strcmp(rp.currentText(), "first");
+    }
+  }
+  CHECK(replays > 10 && phrases > 10 && sawFirst);
+  // Skipping a replay deletes it for good.
+  for (uint32_t t = 600000; strcmp(rp.currentText(), "first"); t += 100) rp.render(t, f);
+  rp.skip(0);
+  CHECK(rp.historyCount() == 1 && !strcmp(rp.history(0).text, "second"));
+  // History is capped and keeps the newest.
+  uint32_t now = 700000;
+  for (int i = 0; i < MAX_HISTORY + 5; i++, now += 20000) {
+    char t[16];
+    snprintf(t, sizeof t, "m%d", i);
+    CHECK(rp.pushGuest(t, "", now));
+    rp.render(now, f);  // starts showing it, so the queue drains
+  }
+  // Clearing the queue also removes those messages from replay.
+  rp.pushGuest("spam", "", now);
+  rp.clearQueue(now);
+  CHECK(strcmp(rp.history(rp.historyCount() - 1).text, "spam"));
+  // The spam push evicted the oldest entry, then clearQueue removed the spam.
+  CHECK(rp.historyCount() == MAX_HISTORY - 1);
+  CHECK(!strcmp(rp.history(rp.historyCount() - 1).text, "m28"));
+  rp.clearHistory();
+  CHECK(rp.historyCount() == 0);
 
   // Every render path lights something and never crashes, across long runs.
   BearClock r;
@@ -125,7 +180,7 @@ static int runTests() {
   r.setDuration(90);
   r.start(0);
   for (uint32_t t = 0; t < 200000; t += 37) {
-    if (t == 3000) r.pushGuest("a much longer guest message that has to scroll by", t);
+    if (t == 3000) r.pushGuest("a much longer guest message that has to scroll by", "Kevin", t);
     if (t == 9000) r.flashNow("LET IT RIP", t);
     if (t == 11000) r.flashNow("this flash text is far too long to fit on a card", t);
     r.render(t, f);
@@ -162,7 +217,7 @@ static int writeFrames(const char* path) {
   auto run = [&](uint32_t from, uint32_t to) {
     for (uint32_t t = from; t < to; t += step) {
       if (t == 1000) c.start(t);
-      if (t == 12000) c.pushGuest("Happy Halloween Cousin! \xF0\x9F\x8E\x83", t);
+      if (t == 12000) c.pushGuest("Happy Halloween Cousin! \xF0\x9F\x8E\x83", "Richie", t);
       if (t == 24000) c.setRemaining(65, t);  // jump to the final minute
       if (t == 30000) c.setRemaining(3, t);   // and to zero
       c.render(t, f);
