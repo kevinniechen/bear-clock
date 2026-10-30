@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>THE BEAR — Fire a ticket</title>
+<meta name="theme-color" content="#05070c">
+<style>
+  :root { --blue: #2f7bff; --ice: #9fd0ff; --bg: #05070c; --line: #16223a; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: #e8eefc;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  main { max-width: 440px; margin: 0 auto; padding: 28px 18px 40px; }
+  .kicker { letter-spacing: .3em; font-size: 12px; color: var(--ice); opacity: .8; text-align: center; }
+  h1 { font-size: 13px; letter-spacing: .25em; font-weight: 600; text-align: center; margin: 6px 0 18px; }
+  .clock { text-align: center; font-size: clamp(44px, 15vw, 64px); font-weight: 700; color: var(--blue);
+    letter-spacing: .04em; text-shadow: 0 0 12px rgba(47,123,255,.7), 0 0 28px rgba(47,123,255,.35);
+    font-variant-numeric: tabular-nums; margin: 4px 0 2px; min-height: 1.1em; }
+  .clock.paused { opacity: .55; }
+  .sub { text-align: center; font-size: 12px; color: #7f8fb0; letter-spacing: .12em; min-height: 1.3em; }
+  .sign { margin: 18px auto 24px; text-align: center; font-size: 12px; letter-spacing: .3em;
+    border: 1px solid var(--line); padding: 8px; color: var(--ice); }
+  label { display: block; font-size: 12px; letter-spacing: .2em; color: #7f8fb0; margin-bottom: 8px; }
+  textarea { width: 100%; height: 92px; resize: none; background: #0a1020; color: #fff; border: 1px solid #22345a;
+    border-radius: 6px; padding: 12px; font: 600 18px/1.3 ui-monospace, Menlo, monospace; text-transform: uppercase; }
+  textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(47,123,255,.25); }
+  .count { text-align: right; font-size: 11px; color: #56668a; margin-top: 4px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
+  .chips button { background: transparent; color: var(--ice); border: 1px solid #22345a; border-radius: 999px;
+    padding: 7px 12px; font: 600 12px ui-monospace, Menlo, monospace; letter-spacing: .08em; }
+  .chips button:active { background: #0d1a33; }
+  .fire { width: 100%; padding: 16px; border: 0; border-radius: 6px; background: var(--blue); color: #fff;
+    font: 700 16px ui-monospace, Menlo, monospace; letter-spacing: .25em; }
+  .fire:disabled { background: #1b2b4d; color: #7f8fb0; }
+  .msg { min-height: 1.4em; text-align: center; margin-top: 14px; font-size: 13px; letter-spacing: .08em; }
+  .ok { color: #7dffb0; } .err { color: #ff8a8a; }
+  footer { margin-top: 36px; text-align: center; font-size: 11px; color: #3d4b69; letter-spacing: .12em; }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">THE BEAR · CHICAGO</div>
+  <h1>TIME LEFT TO TURN IT AROUND</h1>
+  <div class="clock" id="clock">--:--:--</div>
+  <div class="sub" id="sub">&nbsp;</div>
+  <div class="sign">EVERY SECOND COUNTS</div>
+
+  <form id="form" autocomplete="off">
+    <label for="text">FIRE A TICKET ONTO MY APRON</label>
+    <textarea id="text" maxlength="80" placeholder="YES CHEF"></textarea>
+    <div class="count"><span id="n">0</span>/80</div>
+    <div class="chips" id="chips"></div>
+    <button class="fire" id="fire" type="submit">FIRE 🔥</button>
+    <div class="msg" id="msg"></div>
+  </form>
+  <footer>BE NICE · KEEP IT KITCHEN-SAFE</footer>
+</main>
+<script>
+// Two modes: on the public site, messages go through ntfy.sh to the clock.
+// Served by the clock itself over its own hotspot (http://192.168.4.1), it
+// talks to the board's local API instead.
+const GUEST_TOPIC = "bearclock-a2039d53";
+const NTFY = "https://ntfy.sh";
+const LOCAL = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
+const COOLDOWN_S = 15;
+const CHIPS = ["YES CHEF", "HEARD", "BEHIND!", "CORNER!", "LET IT RIP", "COUSIN!",
+               "86 THE RISOTTO", "HAPPY HALLOWEEN"];
+
+const $ = (id) => document.getElementById(id);
+const text = $("text"), fire = $("fire"), msg = $("msg");
+
+for (const c of CHIPS) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = c;
+  b.onclick = () => { text.value = c; text.dispatchEvent(new Event("input")); };
+  $("chips").appendChild(b);
+}
+text.addEventListener("input", () => { $("n").textContent = text.value.length; });
+
+function setMsg(t, cls) { msg.textContent = t; msg.className = "msg " + (cls || ""); }
+
+function cooldownLeft() {
+  const until = +localStorage.getItem("bear_until") || 0;
+  return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+}
+function tickCooldown() {
+  const left = cooldownLeft();
+  fire.disabled = left > 0;
+  fire.textContent = left > 0 ? `NEXT TICKET IN ${left}s` : "FIRE 🔥";
+  if (left > 0) setTimeout(tickCooldown, 500);
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = text.value.trim().toUpperCase();
+  if (!t) { setMsg("Write something first, chef.", "err"); return; }
+  if (cooldownLeft()) return;
+  fire.disabled = true;
+  setMsg("Firing…");
+  try {
+    const url = LOCAL ? "/api/msg" : `${NTFY}/${GUEST_TOPIC}`;
+    const r = await fetch(url, { method: "POST", body: t });
+    if (!r.ok) throw new Error(r.status);
+    localStorage.setItem("bear_until", Date.now() + COOLDOWN_S * 1000);
+    text.value = "";
+    $("n").textContent = 0;
+    setMsg("HEARD! Watch the apron.", "ok");
+  } catch (err) {
+    setMsg("Didn't go through — try again.", "err");
+  }
+  tickCooldown();
+});
+tickCooldown();
+
+// ---- live countdown mirror -------------------------------------------------
+let base = null;  // {remaining, running, at: ms timestamp of the reading}
+
+function fmt(s) {
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+function draw() {
+  if (!base) return;
+  const el = base.running ? (Date.now() - base.at) / 1000 : 0;
+  const s = Math.max(0, Math.ceil(base.remaining - el));
+  $("clock").textContent = fmt(s);
+  $("clock").classList.toggle("paused", !base.running);
+  $("sub").textContent = s === 0 && base.running ? "TIME'S UP" : base.running ? "" : "CLOCK PAUSED";
+}
+setInterval(draw, 250);
+
+function accept(st, atMs) {
+  if (typeof st.remaining !== "number") return;
+  base = { remaining: st.remaining, running: !!st.running, at: atMs };
+  draw();
+}
+
+async function pollLocal() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    accept(await r.json(), Date.now());
+  } catch (e) {}
+  setTimeout(pollLocal, 2000);
+}
+
+function subscribeNtfy() {
+  const topic = `${GUEST_TOPIC}-status`;
+  // Latest cached status first, then live updates.
+  fetch(`${NTFY}/${topic}/json?poll=1&since=latest`).then((r) => r.text()).then((body) => {
+    const line = body.trim().split("\n").pop();
+    if (!line) return;
+    const m = JSON.parse(line);
+    if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000);
+  }).catch(() => {});
+  const es = new EventSource(`${NTFY}/${topic}/sse`);
+  es.onmessage = (ev) => {
+    try {
+      const m = JSON.parse(ev.data);
+      if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000);
+    } catch (e) {}
+  };
+}
+
+LOCAL ? pollLocal() : subscribeNtfy();
+</script>
+</body>
+</html>

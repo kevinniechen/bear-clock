@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Bear clock — admin</title>
+<style>
+  :root { --blue: #2f7bff; --bg: #05070c; --card: #0b1222; --line: #1d2b48; --mute: #7f8fb0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: #e8eefc; font: 15px/1.35 -apple-system, system-ui, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 16px 14px 60px; }
+  .clock { font: 700 46px ui-monospace, Menlo, monospace; color: var(--blue); text-align: center;
+    text-shadow: 0 0 12px rgba(47,123,255,.6); font-variant-numeric: tabular-nums; }
+  .clock.paused { opacity: .5; }
+  .meta { text-align: center; color: var(--mute); font-size: 12px; min-height: 1.3em; margin-bottom: 10px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #555; margin-right: 6px; }
+  .dot.on { background: #3ddc84; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin: 10px 0; }
+  h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .18em; color: var(--mute); font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  button { flex: 1; min-width: 64px; padding: 11px 10px; border-radius: 8px; border: 1px solid #2a3c63;
+    background: #12203d; color: #fff; font: 600 14px system-ui, sans-serif; }
+  button.primary { background: var(--blue); border-color: var(--blue); }
+  button.warn { background: #3a1420; border-color: #6b2235; }
+  button:active { transform: scale(.98); }
+  input[type=text], input[type=number], textarea { background: #060b16; color: #fff; border: 1px solid #2a3c63;
+    border-radius: 8px; padding: 10px; font: 15px ui-monospace, Menlo, monospace; }
+  input[type=number] { width: 70px; }
+  input[type=text], textarea { flex: 1; width: 100%; }
+  textarea { height: 150px; }
+  input[type=range] { flex: 1; }
+  input[type=color] { width: 48px; height: 36px; border: 0; background: none; }
+  label { color: var(--mute); font-size: 13px; }
+  .toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #12203d;
+    border: 1px solid #2a3c63; padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .setup { color: #ffb4b4; }
+</style>
+</head>
+<body>
+<main>
+  <div class="clock" id="clock">--:--:--</div>
+  <div class="meta" id="meta"><span class="dot" id="dot"></span>waiting for clock…</div>
+  <div class="setup" id="setup" hidden></div>
+
+  <section>
+    <h2>COUNTDOWN</h2>
+    <div class="row">
+      <button class="primary" data-cmd='{"cmd":"start"}'>Start</button>
+      <button data-cmd='{"cmd":"pause"}'>Pause</button>
+      <button class="warn" data-confirm="Reset the countdown?" data-cmd='{"cmd":"reset"}'>Reset</button>
+    </div>
+    <div class="row">
+      <input type="number" id="h" min="0" max="9999" value="3"><label>h</label>
+      <input type="number" id="m" min="0" max="59" value="0"><label>m</label>
+      <input type="number" id="s" min="0" max="59" value="0"><label>s</label>
+    </div>
+    <div class="row">
+      <button id="setDur">Set duration</button>
+      <button id="setGo" class="primary">Set &amp; start</button>
+      <button id="setRem">Set time left only</button>
+    </div>
+    <div class="row">
+      <button data-cmd='{"cmd":"add","sec":-300}'>−5m</button>
+      <button data-cmd='{"cmd":"add","sec":-60}'>−1m</button>
+      <button data-cmd='{"cmd":"add","sec":60}'>+1m</button>
+      <button data-cmd='{"cmd":"add","sec":300}'>+5m</button>
+      <button data-cmd='{"cmd":"add","sec":900}'>+15m</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>SAY SOMETHING</h2>
+    <div class="row"><input type="text" id="say" maxlength="100" placeholder="YES CHEF"></div>
+    <div class="row">
+      <button class="primary" id="flash">Flash full-screen</button>
+      <button id="post">Scroll as message</button>
+    </div>
+    <div class="row">
+      <button data-cmd='{"cmd":"skip"}'>Skip current</button>
+      <button data-cmd='{"cmd":"clear"}'>Clear queue</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>GUESTS</h2>
+    <div class="row">
+      <button data-cmd='{"cmd":"guests","on":true}'>Guests ON</button>
+      <button class="warn" data-cmd='{"cmd":"guests","on":false}'>Guests OFF</button>
+    </div>
+    <div class="row">
+      <button data-cmd='{"cmd":"filter","on":true}'>Filter ON</button>
+      <button data-cmd='{"cmd":"filter","on":false}'>Filter OFF</button>
+      <label>repeats</label><input type="number" id="rep" min="1" max="5" value="2">
+      <button id="setRep" style="flex:0">Set</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>LOOK</h2>
+    <div class="row"><label>Brightness</label><input type="range" id="bri" min="5" max="255" value="90"></div>
+    <div class="row">
+      <label>Digits</label><input type="color" id="col" value="#1e6eff">
+      <label>Text</label><input type="color" id="tcol" value="#96d2ff">
+      <button id="setCol">Apply colors</button>
+    </div>
+    <div class="row">
+      <label>Flash a phrase every</label><input type="number" id="fe" min="0" max="3600" value="40"><label>s (0 = off)</label>
+      <button id="setFe" style="flex:0">Set</button>
+    </div>
+    <div class="row">
+      <button data-cmd='{"cmd":"ghost","on":true}'>Ghost segs ON</button>
+      <button data-cmd='{"cmd":"ghost","on":false}'>Ghost segs OFF</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>PHRASES (one per line, ≤ 12)</h2>
+    <textarea id="phr">EVERY SECOND COUNTS
+YES CHEF
+HEARD
+LET IT RIP
+BEHIND!
+CORNER!
+HANDS!
+WE'RE RUNNING OUT OF TIME
+COUSIN!
+WHEN THIS HITS ZERO WE'RE DONE</textarea>
+    <div class="row"><button id="setPhr" class="primary">Save phrases</button></div>
+    <div class="row"><label>At zero</label><input type="text" id="zero" maxlength="23" value="TIME'S UP"><button id="setZero" style="flex:0">Set</button></div>
+  </section>
+
+  <section>
+    <h2>DEVICE</h2>
+    <div class="row">
+      <button data-cmd='{"cmd":"status"}'>Refresh status</button>
+      <button class="warn" data-confirm="Restart the board?" data-cmd='{"cmd":"restart"}'>Restart board</button>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+// Remote mode (GitHub Pages): commands are published to a secret ntfy topic
+// that is passed in the URL hash: admin.html#bearclock-admin-xxxx (remembered).
+// Local mode (board hotspot, http://192.168.4.1/admin): POST /api/cmd?pin=.
+const GUEST_TOPIC = "bearclock-a2039d53";
+const NTFY = "https://ntfy.sh";
+const LOCAL = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
+const $ = (id) => document.getElementById(id);
+
+let adminTopic = "";
+let pin = "";
+if (LOCAL) {
+  pin = localStorage.getItem("bear_pin") || "";
+} else {
+  if (location.hash.length > 1) {
+    localStorage.setItem("bear_admin_topic", decodeURIComponent(location.hash.slice(1)));
+    history.replaceState(null, "", location.pathname);  // keep the secret out of the address bar
+  }
+  adminTopic = localStorage.getItem("bear_admin_topic") || "";
+  if (!adminTopic) {
+    $("setup").hidden = false;
+    $("setup").textContent = "No admin key. Open this page using the admin link (…/admin.html#bearclock-admin-…).";
+  }
+}
+
+function toast(t) {
+  const el = $("toast");
+  el.textContent = t;
+  el.classList.add("show");
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.remove("show"), 1600);
+}
+
+async function send(obj) {
+  try {
+    let r;
+    if (LOCAL) {
+      if (!pin) { pin = prompt("Admin PIN") || ""; localStorage.setItem("bear_pin", pin); }
+      r = await fetch(`/api/cmd?pin=${encodeURIComponent(pin)}`, { method: "POST", body: JSON.stringify(obj) });
+      if (r.status === 403) { localStorage.removeItem("bear_pin"); pin = ""; toast("Wrong PIN"); return; }
+    } else {
+      if (!adminTopic) { toast("No admin key"); return; }
+      r = await fetch(`${NTFY}/${adminTopic}`, { method: "POST", body: JSON.stringify(obj) });
+    }
+    toast(r.ok ? `sent: ${obj.cmd}` : `error ${r.status}`);
+  } catch (e) {
+    toast("network error");
+  }
+}
+
+document.querySelectorAll("[data-cmd]").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+    send(JSON.parse(b.dataset.cmd));
+  });
+});
+
+const hms = () => ({ h: +$("h").value || 0, m: +$("m").value || 0, s: +$("s").value || 0 });
+$("setDur").onclick = () => send({ cmd: "set", ...hms() });
+$("setGo").onclick = () => send({ cmd: "set", ...hms(), start: true });
+$("setRem").onclick = () => { const t = hms(); send({ cmd: "remaining", sec: t.h * 3600 + t.m * 60 + t.s }); };
+$("flash").onclick = () => $("say").value.trim() && send({ cmd: "flash", text: $("say").value.trim().toUpperCase() });
+$("post").onclick = () => $("say").value.trim() && send({ cmd: "msg", text: $("say").value.trim() });
+$("setRep").onclick = () => send({ cmd: "repeats", n: +$("rep").value });
+$("setFe").onclick = () => send({ cmd: "flashevery", sec: +$("fe").value });
+$("setCol").onclick = async () => {
+  await send({ cmd: "color", hex: $("col").value });
+  await send({ cmd: "textcolor", hex: $("tcol").value });
+};
+$("setPhr").onclick = () => {
+  const list = $("phr").value.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 12);
+  if (list.length) send({ cmd: "phrases", list });
+};
+$("setZero").onclick = () => $("zero").value.trim() && send({ cmd: "zero", text: $("zero").value.trim() });
+
+// Brightness: send at most every 300 ms while dragging.
+let briTimer = null;
+$("bri").addEventListener("input", () => {
+  if (briTimer) return;
+  briTimer = setTimeout(() => { briTimer = null; send({ cmd: "brightness", v: +$("bri").value }); }, 300);
+});
+
+// ---- status ----------------------------------------------------------------
+let base = null, lastSeen = 0;
+function fmt(s) {
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+function draw() {
+  if (!base) return;
+  const el = base.running ? (Date.now() - base.at) / 1000 : 0;
+  const s = Math.max(0, Math.ceil(base.remaining - el));
+  $("clock").textContent = fmt(s);
+  $("clock").classList.toggle("paused", !base.running);
+  const ago = Math.round((Date.now() - lastSeen) / 1000);
+  const st = base.st;
+  $("dot").className = "dot" + (ago < 150 ? " on" : "");
+  $("meta").lastChild.textContent =
+    `${st.running ? "running" : "paused"} · queue ${st.queue} · guests ${st.guests ? "on" : "off"}` +
+    ` · ${st.wifi || "no wifi"} · seen ${ago}s ago`;
+}
+setInterval(draw, 250);
+function accept(st, atMs) {
+  if (typeof st.remaining !== "number") return;
+  base = { remaining: st.remaining, running: !!st.running, at: atMs, st };
+  lastSeen = atMs;
+  if (st.brightness) $("bri").value = st.brightness;
+  draw();
+}
+if (LOCAL) {
+  (async function poll() {
+    try { const r = await fetch("/api/state", { cache: "no-store" }); accept(await r.json(), Date.now()); } catch (e) {}
+    setTimeout(poll, 1000);
+  })();
+} else {
+  const topic = `${GUEST_TOPIC}-status`;
+  fetch(`${NTFY}/${topic}/json?poll=1&since=latest`).then((r) => r.text()).then((body) => {
+    const line = body.trim().split("\n").pop();
+    if (line) { const m = JSON.parse(line); if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000); }
+  }).catch(() => {});
+  const es = new EventSource(`${NTFY}/${topic}/sse`);
+  es.onmessage = (ev) => {
+    try { const m = JSON.parse(ev.data); if (m.event === "message") accept(JSON.parse(m.message), m.time * 1000); } catch (e) {}
+  };
+}
+</script>
+</body>
+</html>

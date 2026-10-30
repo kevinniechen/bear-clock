@@ -1,0 +1,6 @@
+firmware/include/secrets.h
+firmware/include/web_assets.h
+firmware/.pio/
+sim/sim.bin
+sim/*.dSYM
+.DS_Store
