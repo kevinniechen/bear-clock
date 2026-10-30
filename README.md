@@ -69,7 +69,9 @@ Settings, phrases, and the countdown (saved every 10 s) persist across power los
   into the firmware at build time for hotspot mode.
 - `sim/run.sh`: compiles bearcore natively, runs logic tests under ASan/UBSan, and
   renders `sim/demo.gif`. Change visuals, run this, look at the GIF, *then* flash.
-- `qr/`: printable QR codes (normal + mirrored for iron-on transfer).
+- `qr/`: printable QR codes (normal + mirrored for iron-on transfer). Print ≥ 3 in wide.
+  Regenerate with `uv run --with qrcode --with pillow python tools/make_qr.py`.
+- `tools/fake_device.py <admin-topic>`: stands in for the board on ntfy, for testing the pages.
 
 The guest topic is public by design (it's in the page). If someone spams it, change
 `NTFY_GUEST_TOPIC` in `config.h` **and** `GUEST_TOPIC` in both web pages, push, and re-flash.
