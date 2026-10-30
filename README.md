@@ -79,3 +79,13 @@ The guest topic is public by design (it's in the page). If someone spams it, cha
 `NTFY_GUEST_TOPIC` in `config.h` **and** `GUEST_TOPIC` in both web pages, push, and re-flash.
 The QR points at the page, not the topic, so no reprint is needed. Or just hit Guests OFF.
 Spam can't control the clock: only the admin topic takes commands.
+
+## Limits worth knowing
+
+- ntfy.sh allows ~250 published messages/day **per IP**. The board's status heartbeat
+  (every 15 min) plus your admin taps share your phone's IP. Guests on cellular each have
+  their own IP. Guests all on one party Wi-Fi share one. If that ever bites, the fix is our own relay
+  (a small Cloudflare Worker) in place of ntfy.sh.
+- The guest page treats the board as offline (button shows 86'D) after 35 min without a
+  heartbeat, so a dead board can still accept "HEARD" tickets for up to ~35 min.
+- A single uninterrupted run must be < 49 days (32-bit millis). Durations up to 9999 h display fine.

@@ -25,6 +25,9 @@
 #include "secrets.h"
 #include "web_assets.h"
 
+// Default 8 KB is tight with ArduinoJson + command buffers on the loop task.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+
 using bear::BearClock;
 using bear::Frame;
 using bear::RGB;
@@ -34,7 +37,7 @@ using bear::RGB;
 
 struct Cmd {
   bool admin;      // admin JSON command vs. guest text
-  char body[512];
+  char body[2048];  // phrases lists can be long; oversized bodies are rejected
 };
 static QueueHandle_t cmdQueue;
 
@@ -50,13 +53,20 @@ struct Status {
 static Status status;
 static portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool publishStatus = false;  // net task posts status to ntfy
-static const uint32_t STATUS_EVERY_MS = 120000;  // plus after every command
+// ntfy.sh allows 250 published messages/day per IP (shared with phones on the
+// same hotspot). Heartbeat 15 min = 96/day, plus one per command/button press.
+// web/index.html treats 35 min of silence as offline.
+static const uint32_t STATUS_EVERY_MS = 15 * 60 * 1000;
 static volatile bool ntfyConnected = false;
 
 static bool enqueue(bool admin, const char* body) {
   Cmd c;
   c.admin = admin;
-  strlcpy(c.body, body, sizeof(c.body));
+  if (strlcpy(c.body, body, sizeof(c.body)) >= sizeof(c.body)) {
+    Serial.printf("rejected %u-byte command (max %u)\n", (unsigned)strlen(body),
+                  (unsigned)sizeof(c.body) - 1);
+    return false;
+  }
   return xQueueSend(cmdQueue, &c, 0) == pdTRUE;
 }
 
@@ -79,6 +89,7 @@ static String statusJson() {
   d["uptime"] = millis() / 1000;
   d["heap"] = ESP.getFreeHeap();
   d["minHeap"] = ESP.getMinFreeHeap();
+  d["maxAlloc"] = ESP.getMaxAllocHeap();  // largest block: TLS needs ~40 KB
   d["reset"] = (int)esp_reset_reason();  // 1 power-on, 3 sw, 4 panic, 6/7 watchdog, 9 brownout
   String out;
   serializeJson(d, out);
@@ -216,7 +227,8 @@ static void loadState() {
   clk.setDuration(clk.settings.durationSec);
   if (prefs.isKey("rem")) {
     clk.setRemaining(prefs.getUInt("rem"), millis());
-    if (prefs.getBool("running", false)) clk.start(millis());
+    // resume(), not start(): a saved 0 means TIME'S UP, not "restart".
+    if (prefs.getBool("running", false)) clk.resume(millis());
   }
   lastSavedRemSec = clk.remainingMs(millis()) / 1000;
   lastSavedRunning = clk.running();
@@ -248,7 +260,8 @@ static bool applyAdmin(JsonDocument& d, uint32_t now) {
   else if (!strcmp(cmd, "reset")) clk.reset(now);
   else if (!strcmp(cmd, "set")) {
     // {"cmd":"set","h":3,"m":0,"s":0,"start":true} sets the full duration.
-    long sec = (d["h"] | 0L) * 3600 + (d["m"] | 0L) * 60 + (d["s"] | 0L);
+    // Floats allowed ("h":1.5); ArduinoJson's `| 0L` would turn them into 0.
+    long sec = lround((d["h"] | 0.0) * 3600 + (d["m"] | 0.0) * 60 + (d["s"] | 0.0));
     if (sec <= 0 || sec > 9999L * 3600) return false;
     clk.setDuration((uint32_t)sec);
     if (d["start"] | false) clk.start(now);
@@ -483,7 +496,7 @@ static void ntfyStream() {
     const char* topic = d["topic"] | "";
     const char* msg = d["message"] | "";
     bool admin = !strcmp(topic, NTFY_ADMIN_TOPIC);
-    if (!enqueue(admin, msg)) Serial.println("command queue full, dropped");
+    if (!enqueue(admin, msg)) Serial.println("command dropped (queue full or too long)");
   }
   ntfyConnected = false;
   Serial.println("ntfy disconnected");
@@ -497,14 +510,20 @@ static void netTask(void*) {
   for (const Net& n : NETWORKS) {
     if (n.ssid && *n.ssid) { multi.addAP(n.ssid, n.pass); nNets++; }
   }
-  uint32_t backoff = 1000;
+  uint32_t backoff = 1000, wifiBackoff = 3000;
   for (;;) {
     if (!nNets) { vTaskDelay(pdMS_TO_TICKS(5000)); continue; }
     if (WiFi.status() != WL_CONNECTED) {
+      // Each scan pulls the radio off the hotspot channel for a few seconds,
+      // so back off while failing, and wait longer if phones are on the hotspot.
       if (multi.run(15000) != WL_CONNECTED) {
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        uint32_t wait = WiFi.softAPgetStationNum() > 0 ? std::max<uint32_t>(wifiBackoff, 60000)
+                                                       : wifiBackoff;
+        wifiBackoff = std::min<uint32_t>(wifiBackoff * 2, 300000);
+        vTaskDelay(pdMS_TO_TICKS(wait));
         continue;
       }
+      wifiBackoff = 3000;
       Serial.printf("wifi: %s ip=%s rssi=%d\n", WiFi.SSID().c_str(),
                     WiFi.localIP().toString().c_str(), WiFi.RSSI());
       if (!otaStarted) {
@@ -549,6 +568,7 @@ static void webBegin() {
   server.on("/api/cmd", HTTP_POST, [] {
     if (server.arg("pin") != ADMIN_PIN) return sendNoCache(403, "text/plain", "bad pin");
     String body = server.arg("plain");
+    if (body.length() >= sizeof(Cmd::body)) return sendNoCache(413, "text/plain", "too long");
     bool ok = enqueue(true, body.c_str());
     sendNoCache(ok ? 200 : 503, "text/plain", ok ? "ok" : "busy");
   });
@@ -600,7 +620,7 @@ void setup() {
   delay(300);
   Serial.printf("\n== Bear clock == reset reason %d\n", (int)esp_reset_reason());
 
-  cmdQueue = xQueueCreate(16, sizeof(Cmd));
+  cmdQueue = xQueueCreate(8, sizeof(Cmd));
   loadState();
   panelBegin();
   panelSelfTest();
@@ -624,7 +644,7 @@ void setup() {
 void loop() {
   uint32_t now = millis();
 
-  Cmd c;
+  static Cmd c;  // 2 KB: keep it off the loop task's stack
   while (xQueueReceive(cmdQueue, &c, 0) == pdTRUE) handleCmd(c, now);
   pollSerial();
   pollButtons(now);

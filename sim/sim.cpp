@@ -90,6 +90,13 @@ static int runTests() {
   c.start(0xFFFFF000u);
   CHECK(c.remainingMs(0x00001000u) == 3 * 3600 * 1000u - 0x2000);
 
+  // Restored at zero after a reboot: stays at zero instead of restarting.
+  BearClock z;
+  z.setDuration(60);
+  z.setRemaining(0, 0);
+  z.resume(5000);
+  CHECK(z.running() && z.remainingMs(9000) == 0);
+
   // guest queue
   BearClock q;
   q.settings.flashEverySec = 0;
@@ -124,7 +131,15 @@ static int runTests() {
     r.render(t, f);
   }
   BearClock big;
-  big.setDuration(1440 * 3600);  // the show's 1440 hours
+  big.setDuration(1440 * 3600);  // the show's 1440 hours (overflowed 32-bit ms)
+  CHECK(big.remainingMs(0) == 1440ull * 3600 * 1000);
+  big.start(0);
+  CHECK(big.remainingMs(1000) == 1440ull * 3600 * 1000 - 1000);
+  big.addSeconds(3600, 1000);
+  CHECK(big.remainingMs(1000) == 1441ull * 3600 * 1000 - 1000);
+  big.setDuration(20000 * 3600);  // clamped
+  CHECK(big.remainingMs(0) == (uint64_t)MAX_SEC * 1000);
+  big.setDuration(1440 * 3600);
   big.render(0, f);
   CHECK(litPixels(f) > 50);
   big.setDuration(5000 * 3600);  // 4-digit hours -> small-text fallback

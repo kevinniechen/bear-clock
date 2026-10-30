@@ -31,6 +31,7 @@ struct Frame {
 constexpr int MAX_TEXT = 120;     // max chars of any displayed message
 constexpr int MAX_QUEUE = 8;      // pending guest messages
 constexpr int MAX_PHRASES = 12;   // rotating Bear phrases
+constexpr uint32_t MAX_SEC = 9999u * 3600;  // longest settable countdown
 
 struct Settings {
   uint32_t durationSec = 3 * 3600;  // what "reset" goes back to
@@ -78,7 +79,11 @@ class BearClock {
   void toggle(uint32_t nowMs) { running_ ? pause(nowMs) : start(nowMs); }
   void reset(uint32_t nowMs);                // back to duration, paused
   void addSeconds(int32_t s, uint32_t nowMs);
-  uint32_t remainingMs(uint32_t nowMs) const;
+  // 64-bit: 1193+ hour durations overflow 32-bit ms. (Elapsed time still uses
+  // the 32-bit ms clock, so a single uninterrupted run must be < 49 days.)
+  uint64_t remainingMs(uint32_t nowMs) const;
+  // Marks the timer running without the start() "restart from zero" rule.
+  void resume(uint32_t nowMs) { anchorMs_ = nowMs; running_ = true; }
   bool running() const { return running_; }
 
   // Messages.
@@ -103,7 +108,7 @@ class BearClock {
   // timer
   bool running_ = false;
   uint32_t anchorMs_ = 0;      // millis() when remAtAnchor_ was measured
-  uint32_t remAtAnchor_ = 0;   // remaining ms at anchorMs_
+  uint64_t remAtAnchor_ = 0;   // remaining ms at anchorMs_
 
   // ticker
   Message queue_[MAX_QUEUE];

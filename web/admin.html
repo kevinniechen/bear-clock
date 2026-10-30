@@ -236,7 +236,7 @@ function draw() {
   $("clock").classList.toggle("paused", !base.running);
   const ago = Math.round((Date.now() - lastSeen) / 1000);
   const st = base.st;
-  $("dot").className = "dot" + (ago < 150 ? " on" : "");
+  $("dot").className = "dot" + (ago < 35 * 60 ? " on" : "");
   $("meta").lastChild.textContent =
     `${st.running ? "running" : "paused"} · queue ${st.queue} · guests ${st.guests ? "on" : "off"}` +
     ` · ${st.wifi || "no wifi"} · seen ${ago}s ago`;

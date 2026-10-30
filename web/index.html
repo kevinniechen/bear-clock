@@ -136,7 +136,7 @@ const GUEST_TOPIC = "bearclock-a2039d53";
 const NTFY = "https://ntfy.sh";
 const LOCAL = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
 const COOLDOWN_S = 15;
-const STALE_MS = 5 * 60 * 1000;  // board reports every 2 min; 5 min of silence = offline
+const STALE_MS = 35 * 60 * 1000;  // board heartbeats every 15 min (ntfy daily cap)
 const CHIPS = ["Yes chef", "Heard", "Behind", "Let it rip", "Cousin!"];
 
 const $ = (id) => document.getElementById(id);

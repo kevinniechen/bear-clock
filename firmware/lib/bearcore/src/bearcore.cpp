@@ -212,17 +212,17 @@ BearClock::BearClock() {
 }
 
 void BearClock::setDuration(uint32_t sec) {
-  settings.durationSec = sec;
+  settings.durationSec = sec > MAX_SEC ? MAX_SEC : sec;
   running_ = false;
-  remAtAnchor_ = sec * 1000u;
+  remAtAnchor_ = (uint64_t)(sec > MAX_SEC ? MAX_SEC : sec) * 1000u;
 }
 
 void BearClock::setRemaining(uint32_t sec, uint32_t nowMs) {
   anchorMs_ = nowMs;
-  remAtAnchor_ = sec * 1000u;
+  remAtAnchor_ = (uint64_t)(sec > MAX_SEC ? MAX_SEC : sec) * 1000u;
 }
 
-uint32_t BearClock::remainingMs(uint32_t nowMs) const {
+uint64_t BearClock::remainingMs(uint32_t nowMs) const {
   if (!running_) return remAtAnchor_;
   uint32_t el = nowMs - anchorMs_;
   return el >= remAtAnchor_ ? 0 : remAtAnchor_ - el;
@@ -230,7 +230,7 @@ uint32_t BearClock::remainingMs(uint32_t nowMs) const {
 
 void BearClock::start(uint32_t nowMs) {
   if (running_) return;
-  if (remAtAnchor_ == 0) remAtAnchor_ = settings.durationSec * 1000u;  // restart
+  if (remAtAnchor_ == 0) remAtAnchor_ = (uint64_t)settings.durationSec * 1000u;  // restart
   anchorMs_ = nowMs;
   running_ = true;
 }
@@ -244,15 +244,15 @@ void BearClock::pause(uint32_t nowMs) {
 void BearClock::reset(uint32_t nowMs) {
   (void)nowMs;
   running_ = false;
-  remAtAnchor_ = settings.durationSec * 1000u;
+  remAtAnchor_ = (uint64_t)settings.durationSec * 1000u;
 }
 
 void BearClock::addSeconds(int32_t s, uint32_t nowMs) {
   int64_t rem = (int64_t)remainingMs(nowMs) + (int64_t)s * 1000;
   if (rem < 0) rem = 0;
-  if (rem > 9999LL * 3600 * 1000) rem = 9999LL * 3600 * 1000;
+  if (rem > (int64_t)MAX_SEC * 1000) rem = (int64_t)MAX_SEC * 1000;
   anchorMs_ = nowMs;
-  remAtAnchor_ = (uint32_t)rem;
+  remAtAnchor_ = (uint64_t)rem;
 }
 
 void BearClock::setPhrases(const char* const* list, int n) {
@@ -382,7 +382,7 @@ static bool layoutTakeover(const char* t, Wrapped& w) {
 
 void BearClock::render(uint32_t nowMs, Frame& f) {
   f.clear();
-  uint32_t rem = remainingMs(nowMs);
+  uint64_t rem = remainingMs(nowMs);
 
   if (!haveCur_ || tickerDone(nowMs)) nextTicker(nowMs);
 
@@ -407,8 +407,8 @@ void BearClock::render(uint32_t nowMs, Frame& f) {
 }
 
 void BearClock::drawClock(uint32_t nowMs, Frame& f) {
-  uint32_t rem = remainingMs(nowMs);
-  uint32_t secs = (rem + 999) / 1000;  // ceil: shows 3:00:00 until 1s elapsed
+  uint64_t rem = remainingMs(nowMs);
+  uint32_t secs = (uint32_t)((rem + 999) / 1000);  // ceil: shows 3:00:00 until 1s elapsed
   uint32_t h = secs / 3600, m = (secs / 60) % 60, s = secs % 60;
 
   RGB on = settings.color;
@@ -417,7 +417,7 @@ void BearClock::drawClock(uint32_t nowMs, Frame& f) {
     int phase = (int)(rem % 1000);
     on = scale(on, 600 + phase * 400 / 1000, 1000);
   }
-  bool started = rem != settings.durationSec * 1000u;
+  bool started = rem != (uint64_t)settings.durationSec * 1000u;
   if (!running_ && started && (nowMs / 600) % 2) on = scale(on, 1, 4);  // paused
   RGB ghost = settings.ghostSegments ? scale(settings.color, 1, 14) : BLACK;
 
@@ -471,7 +471,7 @@ void BearClock::drawClock(uint32_t nowMs, Frame& f) {
 
   // Progress bar: time left out of the full duration.
   const int bx = 2, bw = W - 4, by = 18;
-  uint32_t dur = settings.durationSec * 1000u;
+  uint64_t dur = (uint64_t)settings.durationSec * 1000u;
   int fill = dur ? (int)((uint64_t)(rem > dur ? dur : rem) * bw / dur) : 0;
   f.fillRect(bx, by, bw, 1, scale(settings.color, 1, 10));
   f.fillRect(bx, by, fill, 1, scale(settings.color, 2, 3));
